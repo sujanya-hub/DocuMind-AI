@@ -5,11 +5,11 @@ Resolves configuration exclusively from environment variables.
 Compatible with Render and any platform that sets env vars in the dashboard.
 No Streamlit dependency. No import-time crashes.
 """
-print("🔥 CONFIG VERSION V2 - ENV ONLY")
+
 from __future__ import annotations
 
-import os
 import logging
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -25,6 +25,7 @@ class AppConfig:
     chunk_size: int
     chunk_overlap: int
     embedding_model: str
+    embedding_dim: int
     embedding_batch_size: int
     top_k_results: int
     upload_dir: str
@@ -59,12 +60,13 @@ def _debug_env_status(config: AppConfig) -> None:
     logger.info(
         "DocuMind config loaded from environment | GROQ_API_KEY=%s | "
         "GROQ_MODEL_NAME=%s | CHUNK_SIZE=%s | CHUNK_OVERLAP=%s | "
-        "EMBEDDING_MODEL=%s | TOP_K_RESULTS=%s | UPLOAD_DIR=%s",
+        "EMBEDDING_MODEL=%s | EMBEDDING_BATCH_SIZE=%s | TOP_K_RESULTS=%s | UPLOAD_DIR=%s",
         "set" if bool(config.groq_api_key) else "missing",
         "set" if bool(config.groq_model_name) else "missing",
         config.chunk_size,
         config.chunk_overlap,
         config.embedding_model,
+        config.embedding_batch_size,
         config.top_k_results,
         config.upload_dir,
     )
@@ -76,10 +78,10 @@ def get_config() -> AppConfig:
     Build and cache the runtime settings from environment variables.
 
     Caching keeps repeated reruns cheap while centralizing config logic.
-    Never raises at import time — missing values fall back to safe defaults.
+    Never raises at import time; missing values fall back to safe defaults.
     """
-    chunk_size = max(1, _as_int("CHUNK_SIZE", 900))
-    chunk_overlap = _as_int("CHUNK_OVERLAP", 150)
+    chunk_size = max(1, _as_int("CHUNK_SIZE", 500))
+    chunk_overlap = _as_int("CHUNK_OVERLAP", 50)
 
     if chunk_overlap >= chunk_size:
         chunk_overlap = max(0, chunk_size // 5)
@@ -89,8 +91,9 @@ def get_config() -> AppConfig:
         groq_model_name=_as_str("GROQ_MODEL_NAME", "llama-3.1-8b-instant"),
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        embedding_model=_as_str("EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
-        embedding_batch_size=max(8, _as_int("EMBEDDING_BATCH_SIZE", 32)),
+        embedding_model=_as_str("EMBEDDING_MODEL", "paraphrase-MiniLM-L3-v2"),
+        embedding_dim=max(1, _as_int("EMBEDDING_DIM", 384)),
+        embedding_batch_size=max(1, _as_int("EMBEDDING_BATCH_SIZE", 8)),
         top_k_results=max(1, _as_int("TOP_K_RESULTS", 4)),
         upload_dir=_as_str("UPLOAD_DIR", "uploads"),
         max_tokens=max(128, _as_int("MAX_TOKENS", 1024)),
@@ -133,6 +136,7 @@ GROQ_MODEL_NAME: str = _CONFIG.groq_model_name
 CHUNK_SIZE: int = _CONFIG.chunk_size
 CHUNK_OVERLAP: int = _CONFIG.chunk_overlap
 EMBEDDING_MODEL: str = _CONFIG.embedding_model
+EMBEDDING_DIM: int = _CONFIG.embedding_dim
 EMBEDDING_BATCH_SIZE: int = _CONFIG.embedding_batch_size
 TOP_K_RESULTS: int = _CONFIG.top_k_results
 UPLOAD_DIR: str = _CONFIG.upload_dir

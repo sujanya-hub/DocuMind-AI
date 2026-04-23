@@ -2,7 +2,7 @@
 vectordb.py - FAISS vector index with chunk metadata storage.
 
 VectorDB pairs a FAISS IndexFlatIP index (cosine similarity via inner
-product on normalised vectors) with a parallel list of chunk metadata
+product on normalised vectors) with a parallel list of compact chunk metadata
 dicts. The index can be persisted to and restored from disk.
 """
 
@@ -17,51 +17,25 @@ import numpy as np
 try:
     import faiss
 except ImportError as exc:
-    raise ImportError(
-        "faiss-cpu is required: pip install faiss-cpu"
-    ) from exc
+    raise ImportError("faiss-cpu is required: pip install faiss-cpu") from exc
 
 from core.config import TOP_K_RESULTS
 from core.embedder import embed_query, embed_texts, get_embedding_dim
 
 
 class VectorDB:
-    """
-    In-memory FAISS index paired with chunk metadata.
-
-    Attributes:
-        dim    (int):              Embedding vector dimensionality.
-        index  (faiss.IndexFlatIP): FAISS cosine-similarity index.
-        chunks (list[dict]):       Parallel metadata for each indexed vector.
-    """
+    """In-memory FAISS index paired with compact chunk metadata."""
 
     def __init__(self) -> None:
         self.dim: int = get_embedding_dim()
         self.index: faiss.IndexFlatIP = faiss.IndexFlatIP(self.dim)
         self.chunks: List[Dict[str, Any]] = []
 
-    # -------------------------------------------------------------------------
-    # Indexing
-    # -------------------------------------------------------------------------
-
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
-        """
-        Embed and add chunk dicts to the index.
-
-        Each dict must contain a ``text`` key. All keys are preserved
-        and returned verbatim during retrieval.
-
-        Args:
-            chunks: List of chunk dicts from ``chunker.chunk_pages()``.
-
-        Raises:
-            ValueError: If chunks is empty.
-        """
+        """Embed and add chunk dicts to the index."""
         if not chunks:
             raise ValueError("Cannot index an empty chunk list.")
 
-        # Drop exact duplicate chunk texts before embedding so we do not pay
-        # twice for redundant work on repetitive PDFs.
         unique_chunks: List[Dict[str, Any]] = []
         seen_texts: set[str] = set()
 
@@ -69,101 +43,72 @@ class VectorDB:
             text = str(chunk.get("text", "")).strip()
             if not text:
                 continue
+
             fingerprint = " ".join(text.split())
             if fingerprint in seen_texts:
                 continue
             seen_texts.add(fingerprint)
-            unique_chunks.append({**chunk, "text": text})
+
+            # Keep stored metadata compact to reduce memory pressure on Render.
+            unique_chunks.append(
+                {
+                    "chunk_id": chunk.get("chunk_id"),
+                    "text": text,
+                    "page_number": chunk.get("page_number"),
+                    "source": chunk.get("source"),
+                    "char_start": chunk.get("char_start"),
+                    "char_end": chunk.get("char_end"),
+                }
+            )
 
         if not unique_chunks:
             raise ValueError("No non-empty chunks were available for indexing.")
 
-        texts = [c["text"] for c in unique_chunks]
-        vectors = embed_texts(texts)
+        texts = [chunk["text"] for chunk in unique_chunks]
+        vectors = np.ascontiguousarray(embed_texts(texts), dtype=np.float32)
         self.index.add(vectors)
         self.chunks.extend(unique_chunks)
 
     def reset(self) -> None:
         """Drop all indexed vectors and associated metadata."""
-        self.index  = faiss.IndexFlatIP(self.dim)
+        self.index = faiss.IndexFlatIP(self.dim)
         self.chunks = []
-
-    # -------------------------------------------------------------------------
-    # Retrieval
-    # -------------------------------------------------------------------------
 
     def search(
         self,
         query: str,
         top_k: int = TOP_K_RESULTS,
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieve the top-k most similar chunks for a query string.
-
-        Args:
-            query: Natural-language question or search phrase.
-            top_k: Number of results to return.
-
-        Returns:
-            List of chunk dicts (copies), each augmented with a
-            ``score`` key (float, cosine similarity in [0, 1]).
-
-        Raises:
-            RuntimeError: If the index is empty.
-            ValueError:   If query is blank.
-        """
+        """Retrieve the top-k most similar chunks for a query string."""
         if self.index.ntotal == 0:
-            raise RuntimeError(
-                "VectorDB is empty. Call add_chunks() before searching."
-            )
+            raise RuntimeError("VectorDB is empty. Call add_chunks() before searching.")
         if not query.strip():
             raise ValueError("Query must not be blank.")
 
-        top_k  = min(top_k, self.index.ntotal)
-        q_vec  = embed_query(query).reshape(1, -1)
+        top_k = min(top_k, self.index.ntotal)
+        q_vec = np.ascontiguousarray(embed_query(query).reshape(1, -1), dtype=np.float32)
         scores, indices = self.index.search(q_vec, top_k)
 
         results: List[Dict[str, Any]] = []
         for score, idx in zip(scores[0], indices[0]):
             if idx == -1:
                 continue
-            result          = dict(self.chunks[idx])
+            result = dict(self.chunks[idx])
             result["score"] = float(score)
             results.append(result)
 
         return results
 
-    # -------------------------------------------------------------------------
-    # Persistence
-    # -------------------------------------------------------------------------
-
     def save(self, directory: str) -> None:
-        """
-        Write the FAISS index and chunk metadata to directory.
-
-        Creates ``faiss.index`` and ``chunks.pkl`` inside the directory.
-
-        Args:
-            directory: Writable directory path (created if absent).
-        """
+        """Write the FAISS index and chunk metadata to directory."""
         os.makedirs(directory, exist_ok=True)
-        faiss.write_index(
-            self.index, os.path.join(directory, "faiss.index")
-        )
+        faiss.write_index(self.index, os.path.join(directory, "faiss.index"))
         with open(os.path.join(directory, "chunks.pkl"), "wb") as fh:
             pickle.dump(self.chunks, fh)
 
     def load(self, directory: str) -> None:
-        """
-        Restore index and metadata from a previously saved directory.
-
-        Args:
-            directory: Path containing ``faiss.index`` and ``chunks.pkl``.
-
-        Raises:
-            FileNotFoundError: If either file is missing.
-        """
-        index_path  = os.path.join(directory, "faiss.index")
+        """Restore index and metadata from a previously saved directory."""
+        index_path = os.path.join(directory, "faiss.index")
         chunks_path = os.path.join(directory, "chunks.pkl")
 
         for path in (index_path, chunks_path):
@@ -173,10 +118,6 @@ class VectorDB:
         self.index = faiss.read_index(index_path)
         with open(chunks_path, "rb") as fh:
             self.chunks = pickle.load(fh)
-
-    # -------------------------------------------------------------------------
-    # Info
-    # -------------------------------------------------------------------------
 
     @property
     def total_chunks(self) -> int:
