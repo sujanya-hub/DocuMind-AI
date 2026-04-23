@@ -10,6 +10,7 @@ a running Streamlit process.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import time
 import traceback
@@ -50,8 +51,16 @@ def save_uploaded_file(uploaded_file: Any, destination_dir: str) -> str:
     file_path = os.path.join(destination_dir, uploaded_file.name)
 
     try:
+        payload = uploaded_file.getbuffer()
+
+        # Avoid rewriting the file when the upload content has not changed.
+        if os.path.exists(file_path):
+            with open(file_path, "rb") as existing_fh:
+                if existing_fh.read() == payload:
+                    return file_path
+
         with open(file_path, "wb") as fh:
-            fh.write(uploaded_file.getbuffer())
+            fh.write(payload)
     except OSError as exc:
         raise IOError(
             f"Could not save '{uploaded_file.name}' "
@@ -59,6 +68,11 @@ def save_uploaded_file(uploaded_file: Any, destination_dir: str) -> str:
         ) from exc
 
     return file_path
+
+
+def file_sha256(uploaded_file: Any) -> str:
+    """Return a stable content hash for a Streamlit UploadedFile."""
+    return hashlib.sha256(uploaded_file.getbuffer()).hexdigest()
 
 
 def format_file_size(num_bytes: int) -> str:

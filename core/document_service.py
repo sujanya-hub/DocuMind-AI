@@ -25,11 +25,12 @@ from typing import Any, Dict
 import streamlit as st
 
 from core.chunker import chunk_pages
+from core.config import UPLOAD_DIR
 from core.pdf_reader import extract_pages, get_document_metadata
 from core.qa_engine import QAEngine
 from core.summarizer import Summarizer
 from core.vectordb import VectorDB
-from utils.helpers import ensure_directory, save_uploaded_file
+from utils.helpers import ensure_directory, file_sha256, save_uploaded_file
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def _log_pipeline_summary(
 
 def run_pipeline(
     uploaded_file: Any,
-    upload_dir: str,
+    upload_dir: str = UPLOAD_DIR,
 ) -> Dict[str, Any]:
     """
     Execute the full document ingestion pipeline for an uploaded PDF.
@@ -149,6 +150,7 @@ def run_pipeline(
     """
     ensure_directory(upload_dir)
     pipeline_start = time.perf_counter()
+    document_hash = file_sha256(uploaded_file)
 
     with st.status("Processing document...", expanded=True) as status:
 
@@ -266,7 +268,9 @@ def run_pipeline(
         st.write("Initialising AI engines...")
         _t = time.perf_counter()
         try:
-            qa_engine  = QAEngine(vector_db=vector_db)
+            # These objects stay lightweight on init and only require an API
+            # key when the app actually performs an LLM call.
+            qa_engine = QAEngine(vector_db=vector_db)
             summarizer = Summarizer()
         except Exception as exc:
             raise RuntimeError(f"AI engine initialisation failed: {exc}") from exc
@@ -284,6 +288,7 @@ def run_pipeline(
 
     return {
         "pdf_path":        pdf_path,
+        "document_hash":   document_hash,
         "metadata":        metadata,
         "file_size":       file_size,
         "pages":           pages,

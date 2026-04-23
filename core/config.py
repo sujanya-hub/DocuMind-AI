@@ -1,78 +1,141 @@
 """
-config.py - Runtime configuration for DocuMind Analyst.
+Production-safe runtime settings for DocuMind.
 
-All settings are sourced from Streamlit secrets (.streamlit/secrets.toml)
-with sensible production defaults applied when a key is absent. No dotenv
-dependency is used. GROQ_API_KEY is never exposed as a module-level
-constant; it is read exclusively inside core.ai_engine.
-
-Secrets file template (.streamlit/secrets.toml):
-
-    GROQ_API_KEY     = "your_key_here"
-    GROQ_MODEL_NAME  = "llama-3.1-8b-instant"
-    CHUNK_SIZE       = 800
-    CHUNK_OVERLAP    = 150
-    EMBEDDING_MODEL  = "all-MiniLM-L6-v2"
-    TOP_K_RESULTS    = 4
-    UPLOAD_DIR       = "data/uploads"
-    MAX_TOKENS       = 1024
-    TEMPERATURE      = 0.2
+Resolves configuration exclusively from environment variables.
+Compatible with Render and any platform that sets env vars in the dashboard.
+No Streamlit dependency. No import-time crashes.
 """
 
 from __future__ import annotations
 
-import streamlit as st
+import os
+import logging
+from dataclasses import dataclass
+from functools import lru_cache
+
+logger = logging.getLogger(__name__)
 
 
-def _get(key: str, default: object) -> object:
+@dataclass(frozen=True)
+class AppConfig:
+    """Typed application settings with safe defaults."""
+
+    groq_api_key: str
+    groq_model_name: str
+    chunk_size: int
+    chunk_overlap: int
+    embedding_model: str
+    embedding_batch_size: int
+    top_k_results: int
+    upload_dir: str
+    max_tokens: int
+    temperature: float
+    analysis_context_chars: int
+
+
+def _as_int(key: str, default: int) -> int:
+    try:
+        return int(os.environ.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(key: str, default: float) -> float:
+    try:
+        return float(os.environ.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_str(key: str, default: str) -> str:
+    return str(os.environ.get(key, default)).strip()
+
+
+def _debug_env_status(config: AppConfig) -> None:
+    """Optionally log which environment-driven settings are present."""
+    if _as_str("DOCUMIND_DEBUG_CONFIG", "").lower() not in {"1", "true", "yes", "on"}:
+        return
+
+    logger.info(
+        "DocuMind config loaded from environment | GROQ_API_KEY=%s | "
+        "GROQ_MODEL_NAME=%s | CHUNK_SIZE=%s | CHUNK_OVERLAP=%s | "
+        "EMBEDDING_MODEL=%s | TOP_K_RESULTS=%s | UPLOAD_DIR=%s",
+        "set" if bool(config.groq_api_key) else "missing",
+        "set" if bool(config.groq_model_name) else "missing",
+        config.chunk_size,
+        config.chunk_overlap,
+        config.embedding_model,
+        config.top_k_results,
+        config.upload_dir,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_config() -> AppConfig:
     """
-    Read a value from st.secrets with a typed fallback default.
+    Build and cache the runtime settings from environment variables.
 
-    Args:
-        key:     Secret key to look up.
-        default: Value returned when the key is absent.
-
-    Returns:
-        The secret value if present, otherwise ``default``.
+    Caching keeps repeated reruns cheap while centralizing config logic.
+    Never raises at import time — missing values fall back to safe defaults.
     """
-    return st.secrets.get(key, default)
+    chunk_size = max(1, _as_int("CHUNK_SIZE", 900))
+    chunk_overlap = _as_int("CHUNK_OVERLAP", 150)
+
+    if chunk_overlap >= chunk_size:
+        chunk_overlap = max(0, chunk_size // 5)
+
+    config = AppConfig(
+        groq_api_key=_as_str("GROQ_API_KEY", ""),
+        groq_model_name=_as_str("GROQ_MODEL_NAME", "llama-3.1-8b-instant"),
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        embedding_model=_as_str("EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+        embedding_batch_size=max(8, _as_int("EMBEDDING_BATCH_SIZE", 32)),
+        top_k_results=max(1, _as_int("TOP_K_RESULTS", 4)),
+        upload_dir=_as_str("UPLOAD_DIR", "uploads"),
+        max_tokens=max(128, _as_int("MAX_TOKENS", 1024)),
+        temperature=max(0.0, min(2.0, _as_float("TEMPERATURE", 0.2))),
+        analysis_context_chars=max(4000, _as_int("ANALYSIS_CONTEXT_CHARS", 12000)),
+    )
+    _debug_env_status(config)
+    return config
 
 
-# -- Groq API -----------------------------------------------------------------
-GROQ_MODEL_NAME: str = str(_get("GROQ_MODEL_NAME", "llama-3.1-8b-instant"))
+def get_api_key() -> str:
+    """Return the configured Groq API key, or an empty string when absent."""
+    return get_config().groq_api_key
 
-# -- Chunking -----------------------------------------------------------------
-CHUNK_SIZE: int    = int(_get("CHUNK_SIZE", 800))
-CHUNK_OVERLAP: int = int(_get("CHUNK_OVERLAP", 150))
 
-# -- Embeddings ---------------------------------------------------------------
-EMBEDDING_MODEL: str = str(_get("EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
-
-# -- FAISS Retrieval ----------------------------------------------------------
-TOP_K_RESULTS: int = int(_get("TOP_K_RESULTS", 4))
-
-# -- File Storage -------------------------------------------------------------
-UPLOAD_DIR: str = str(_get("UPLOAD_DIR", "data/uploads"))
-
-# -- LLM Generation -----------------------------------------------------------
-MAX_TOKENS: int    = int(_get("MAX_TOKENS", 1024))
-TEMPERATURE: float = float(_get("TEMPERATURE", 0.2))
+def has_api_key() -> bool:
+    """Return True when a usable Groq API key is configured."""
+    return bool(get_api_key())
 
 
 def validate_config() -> None:
     """
-    Assert that all required secrets are present and non-empty.
+    Raise a clear runtime error when the LLM API key is missing.
 
-    Must be called once at application startup before any AI client
-    is constructed. Raises early to prevent misleading downstream errors.
-
-    Raises:
-        EnvironmentError: If GROQ_API_KEY is absent or empty.
+    Called lazily by LLM-facing code so document parsing and indexing
+    can still succeed in environments that are not fully configured.
     """
-    api_key: str = str(st.secrets.get("GROQ_API_KEY", ""))
-    if not api_key.strip():
-        raise EnvironmentError(
-            "GROQ_API_KEY is not configured. "
-            "Add the following to .streamlit/secrets.toml:\n"
-            '  GROQ_API_KEY = "your_api_key_here"'
-        )
+    if has_api_key():
+        return
+
+    raise EnvironmentError(
+        "Missing GROQ_API_KEY. Set it as an environment variable in the "
+        "Render dashboard under Environment > Environment Variables."
+    )
+
+
+_CONFIG = get_config()
+
+GROQ_MODEL_NAME: str = _CONFIG.groq_model_name
+CHUNK_SIZE: int = _CONFIG.chunk_size
+CHUNK_OVERLAP: int = _CONFIG.chunk_overlap
+EMBEDDING_MODEL: str = _CONFIG.embedding_model
+EMBEDDING_BATCH_SIZE: int = _CONFIG.embedding_batch_size
+TOP_K_RESULTS: int = _CONFIG.top_k_results
+UPLOAD_DIR: str = _CONFIG.upload_dir
+MAX_TOKENS: int = _CONFIG.max_tokens
+TEMPERATURE: float = _CONFIG.temperature
+ANALYSIS_CONTEXT_CHARS: int = _CONFIG.analysis_context_chars

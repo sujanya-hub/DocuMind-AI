@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+from functools import lru_cache
 from typing import Any, Dict, List
 
 try:
@@ -42,28 +43,8 @@ def extract_pages(pdf_path: str) -> List[Dict[str, Any]]:
         ValueError:        If the file cannot be opened as a PDF.
     """
     _assert_file_exists(pdf_path)
-    pages: List[Dict[str, Any]] = []
-
-    try:
-        doc = fitz.open(pdf_path)
-    except Exception as exc:
-        raise ValueError(
-            f"Cannot open PDF '{pdf_path}': {exc}"
-        ) from exc
-
-    with doc:
-        for i, page in enumerate(doc, start=1):
-            raw_text: str = page.get_text("text") or ""
-            cleaned = _clean_text(raw_text)
-            pages.append(
-                {
-                    "page_number": i,
-                    "text":        cleaned,
-                    "char_count":  len(cleaned),
-                }
-            )
-
-    return pages
+    payload = _read_pdf_payload(pdf_path, os.path.getmtime(pdf_path))
+    return list(payload["pages"])
 
 
 def get_document_metadata(pdf_path: str) -> Dict[str, Any]:
@@ -86,23 +67,8 @@ def get_document_metadata(pdf_path: str) -> Dict[str, Any]:
         ValueError:        If the file cannot be opened as a PDF.
     """
     _assert_file_exists(pdf_path)
-
-    try:
-        doc = fitz.open(pdf_path)
-    except Exception as exc:
-        raise ValueError(
-            f"Cannot open PDF '{pdf_path}': {exc}"
-        ) from exc
-
-    with doc:
-        meta = doc.metadata or {}
-        return {
-            "file_name":  os.path.basename(pdf_path),
-            "page_count": doc.page_count,
-            "title":      meta.get("title",  "Unknown") or "Unknown",
-            "author":     meta.get("author", "Unknown") or "Unknown",
-            "subject":    meta.get("subject", "")        or "",
-        }
+    payload = _read_pdf_payload(pdf_path, os.path.getmtime(pdf_path))
+    return dict(payload["metadata"])
 
 
 # ---------------------------------------------------------------------------
@@ -129,3 +95,43 @@ def _clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+@lru_cache(maxsize=16)
+def _read_pdf_payload(pdf_path: str, modified_time: float) -> Dict[str, Any]:
+    """
+    Read the PDF once and cache both pages and metadata.
+
+    The ``modified_time`` argument is part of the cache key so uploads with the
+    same filename but new contents do not serve stale results.
+    """
+    del modified_time
+
+    pages: List[Dict[str, Any]] = []
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as exc:
+        raise ValueError(f"Cannot open PDF '{pdf_path}': {exc}") from exc
+
+    with doc:
+        for i, page in enumerate(doc, start=1):
+            cleaned = _clean_text(page.get_text("text") or "")
+            pages.append(
+                {
+                    "page_number": i,
+                    "text": cleaned,
+                    "char_count": len(cleaned),
+                }
+            )
+
+        meta = doc.metadata or {}
+        metadata = {
+            "file_name": os.path.basename(pdf_path),
+            "page_count": doc.page_count,
+            "title": meta.get("title", "Unknown") or "Unknown",
+            "author": meta.get("author", "Unknown") or "Unknown",
+            "subject": meta.get("subject", "") or "",
+        }
+
+    return {"pages": pages, "metadata": metadata}

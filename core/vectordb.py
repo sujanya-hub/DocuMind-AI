@@ -60,10 +60,28 @@ class VectorDB:
         if not chunks:
             raise ValueError("Cannot index an empty chunk list.")
 
-        texts   = [c["text"] for c in chunks]
+        # Drop exact duplicate chunk texts before embedding so we do not pay
+        # twice for redundant work on repetitive PDFs.
+        unique_chunks: List[Dict[str, Any]] = []
+        seen_texts: set[str] = set()
+
+        for chunk in chunks:
+            text = str(chunk.get("text", "")).strip()
+            if not text:
+                continue
+            fingerprint = " ".join(text.split())
+            if fingerprint in seen_texts:
+                continue
+            seen_texts.add(fingerprint)
+            unique_chunks.append({**chunk, "text": text})
+
+        if not unique_chunks:
+            raise ValueError("No non-empty chunks were available for indexing.")
+
+        texts = [c["text"] for c in unique_chunks]
         vectors = embed_texts(texts)
         self.index.add(vectors)
-        self.chunks.extend(chunks)
+        self.chunks.extend(unique_chunks)
 
     def reset(self) -> None:
         """Drop all indexed vectors and associated metadata."""

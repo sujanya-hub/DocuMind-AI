@@ -12,7 +12,7 @@ import logging
 from typing import Any, Dict, List
 
 from core.ai_engine import generate_response
-from core.config import MAX_TOKENS, TEMPERATURE, TOP_K_RESULTS, validate_config
+from core.config import MAX_TOKENS, TEMPERATURE, TOP_K_RESULTS
 from core.vectordb import VectorDB
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,6 @@ class QAEngine:
     """
 
     def __init__(self, vector_db: VectorDB) -> None:
-        validate_config()
         self.db: VectorDB = vector_db
 
     # -------------------------------------------------------------------------
@@ -114,8 +113,9 @@ class QAEngine:
         except Exception as exc:
             logger.error("[QAEngine] LLM call failed: %s", exc)
             answer_text = (
-                "An error occurred while generating the answer. "
-                f"Details: {type(exc).__name__}: {exc}"
+                "The document was indexed successfully, but the LLM request "
+                "could not be completed. Confirm GROQ_API_KEY is set in the "
+                f"environment. Details: {type(exc).__name__}: {exc}"
             )
 
         if not answer_text or not answer_text.strip():

@@ -8,6 +8,7 @@ search in FAISS is equivalent to cosine similarity.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import List
 
 import numpy as np
@@ -19,15 +20,13 @@ except ImportError as exc:
         "sentence-transformers is required: pip install sentence-transformers"
     ) from exc
 
-from core.config import EMBEDDING_MODEL
+from core.config import EMBEDDING_BATCH_SIZE, EMBEDDING_MODEL
 
 # ---------------------------------------------------------------------------
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_model: SentenceTransformer | None = None
-
-
+@lru_cache(maxsize=1)
 def get_model() -> SentenceTransformer:
     """
     Return the shared SentenceTransformer instance, loading it on first call.
@@ -35,10 +34,7 @@ def get_model() -> SentenceTransformer:
     Returns:
         Loaded and cached SentenceTransformer model.
     """
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
-    return _model
+    return SentenceTransformer(EMBEDDING_MODEL)
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +59,7 @@ def embed_texts(texts: List[str]) -> np.ndarray:
 
     embeddings = get_model().encode(
         texts,
+        batch_size=EMBEDDING_BATCH_SIZE,
         convert_to_numpy=True,
         show_progress_bar=False,
         normalize_embeddings=True,

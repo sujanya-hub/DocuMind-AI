@@ -30,7 +30,7 @@ from typing import Any, Dict, List
 
 from core.ai_engine import generate_response
 from core.chunker import chunk_text
-from core.config import MAX_TOKENS, TEMPERATURE, validate_config
+from core.config import MAX_TOKENS, TEMPERATURE
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,9 @@ class Summarizer:
     """
 
     def __init__(self) -> None:
-        validate_config()
+        # Keep construction side-effect free so document ingestion can finish
+        # even before deployment secrets are configured.
+        pass
 
     # -------------------------------------------------------------------------
     # Primary public API
