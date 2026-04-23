@@ -5,7 +5,7 @@ Resolves configuration exclusively from environment variables.
 Compatible with Render and any platform that sets env vars in the dashboard.
 No Streamlit dependency. No import-time crashes.
 """
-
+print("🔥 CONFIG VERSION V2 - ENV ONLY")
 from __future__ import annotations
 
 import os
