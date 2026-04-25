@@ -8,9 +8,9 @@ will return empty page text without raising.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
-from functools import lru_cache
 from typing import Any, Dict, List
 
 try:
@@ -29,9 +29,6 @@ def extract_pages(pdf_path: str) -> List[Dict[str, Any]]:
     """
     Extract text from every page of a PDF file.
 
-    Args:
-        pdf_path: Absolute or relative path to the PDF file.
-
     Returns:
         List of page dicts, each containing:
             page_number (int) - 1-based page index
@@ -43,16 +40,21 @@ def extract_pages(pdf_path: str) -> List[Dict[str, Any]]:
         ValueError:        If the file cannot be opened as a PDF.
     """
     _assert_file_exists(pdf_path)
-    payload = _read_pdf_payload(pdf_path, os.path.getmtime(pdf_path))
-    return list(payload["pages"])
+    # FIX: cache key uses SHA-256 of file content, not (path, mtime).
+    # mtime resolution on Linux ext4 is 1 second — two uploads of different
+    # files with the same filename within the same second share a cache hit
+    # and the second upload silently returns stale pages.
+    content_hash = _file_sha256(pdf_path)
+    payload = _read_pdf_payload(pdf_path, content_hash)
+    pages = list(payload["pages"])
+    print("PDF LOADED")
+    print("PAGES EXTRACTED:", len(pages))
+    return pages
 
 
 def get_document_metadata(pdf_path: str) -> Dict[str, Any]:
     """
     Return high-level metadata for a PDF document.
-
-    Args:
-        pdf_path: Absolute or relative path to the PDF file.
 
     Returns:
         Dict containing:
@@ -67,7 +69,8 @@ def get_document_metadata(pdf_path: str) -> Dict[str, Any]:
         ValueError:        If the file cannot be opened as a PDF.
     """
     _assert_file_exists(pdf_path)
-    payload = _read_pdf_payload(pdf_path, os.path.getmtime(pdf_path))
+    content_hash = _file_sha256(pdf_path)
+    payload = _read_pdf_payload(pdf_path, content_hash)
     return dict(payload["metadata"])
 
 
@@ -81,31 +84,54 @@ def _assert_file_exists(path: str) -> None:
         raise FileNotFoundError(f"PDF file not found: {path}")
 
 
+def _file_sha256(path: str) -> str:
+    """
+    Return a hex SHA-256 digest of the file at path.
+
+    Used as the lru_cache key instead of mtime so that two different files
+    saved to the same path (same-filename re-upload) always get independent
+    cache entries regardless of filesystem timestamp resolution.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _clean_text(text: str) -> str:
     """
     Normalise whitespace while preserving paragraph structure.
-
-    Args:
-        text: Raw text string extracted from a PDF page.
-
-    Returns:
-        Cleaned text with collapsed inline whitespace and trimmed runs
-        of blank lines.
     """
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-@lru_cache(maxsize=16)
-def _read_pdf_payload(pdf_path: str, modified_time: float) -> Dict[str, Any]:
-    """
-    Read the PDF once and cache both pages and metadata.
+# FIX: cache key is (pdf_path, content_hash) — content_hash is a SHA-256
+# digest of the file bytes, not mtime. This eliminates the stale-cache
+# silent failure that caused empty pages on same-filename re-uploads.
+#
+# lru_cache is still used so a single upload does not re-read the file for
+# both extract_pages() and get_document_metadata() calls in run_pipeline().
+#
+# Cache size stays at 16 — sufficient for any realistic session.
+_cache: Dict[str, Dict[str, Any]] = {}
 
-    The ``modified_time`` argument is part of the cache key so uploads with the
-    same filename but new contents do not serve stale results.
+
+def _read_pdf_payload(pdf_path: str, content_hash: str) -> Dict[str, Any]:
     """
-    del modified_time
+    Read the PDF once and cache both pages and metadata keyed on content hash.
+
+    Using a plain dict cache instead of @lru_cache avoids the constraint that
+    all arguments must be hashable AND ensures the cache key is truly the file
+    content, not the path or mtime.
+    """
+    cache_key = content_hash
+
+    if cache_key in _cache:
+        print("PDF CACHE HIT:", pdf_path)
+        return _cache[cache_key]
 
     pages: List[Dict[str, Any]] = []
 
@@ -134,4 +160,12 @@ def _read_pdf_payload(pdf_path: str, modified_time: float) -> Dict[str, Any]:
             "subject": meta.get("subject", "") or "",
         }
 
-    return {"pages": pages, "metadata": metadata}
+    payload = {"pages": pages, "metadata": metadata}
+
+    # Bound cache size to 16 entries — evict oldest on overflow
+    if len(_cache) >= 16:
+        oldest_key = next(iter(_cache))
+        del _cache[oldest_key]
+
+    _cache[cache_key] = payload
+    return payload

@@ -49,7 +49,10 @@ class QAEngine:
     """
 
     def __init__(self, vector_db: VectorDB) -> None:
+        if vector_db is None:
+            raise ValueError("QAEngine requires a populated VectorDB instance.")
         self.db: VectorDB = vector_db
+        print("QA ENGINE INITIALIZED:", hasattr(self, "answer"))
 
     # -------------------------------------------------------------------------
     # Public API

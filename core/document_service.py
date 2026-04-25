@@ -13,8 +13,6 @@ import logging
 import time
 from typing import Any, Dict
 
-import streamlit as st
-
 from core.chunker import chunk_pages
 from core.config import UPLOAD_DIR
 from core.pdf_reader import extract_pages, get_document_metadata
@@ -65,7 +63,6 @@ def _log_pipeline_summary(
     chunks: list[dict[str, Any]],
     processing_time: float,
 ) -> None:
-    """Emit a structured INFO summary after a successful pipeline run."""
     text_pages = sum(1 for page in pages if len(page.get("text", "")) >= _MIN_PAGE_TEXT_LENGTH)
     empty_pages = len(pages) - text_pages
     logger.info(
@@ -83,108 +80,122 @@ def run_pipeline(
     upload_dir: str = UPLOAD_DIR,
 ) -> Dict[str, Any]:
     """Execute the full document ingestion pipeline for an uploaded PDF."""
+    print("PIPELINE START")
     ensure_directory(upload_dir)
-    pipeline_start = time.perf_counter()
+    start_time = time.time()
+
+    # ── FIX: seek uploaded_file to start before reading its bytes.
+    # file_sha256() reads the entire byte stream. If save_uploaded_file()
+    # was called first (or Streamlit already buffered a read) the file
+    # pointer sits at EOF and subsequent reads return 0 bytes — silently
+    # producing an empty document hash and empty page list.
+    # We seek to 0 before every read operation so order does not matter.
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+
     document_hash = file_sha256(uploaded_file)
 
-    with st.status("Processing document...", expanded=True) as status:
-        st.write("Saving uploaded file...")
-        try:
-            pdf_path = save_uploaded_file(uploaded_file, upload_dir)
-            file_size = uploaded_file.size
-        except Exception as exc:
-            raise IOError(f"Failed to save uploaded file: {exc}") from exc
+    # ── Save ──────────────────────────────────────────────────────────────────
+    # Seek again: file_sha256() consumed the stream; save_uploaded_file()
+    # must start from byte 0 or it writes an empty file to disk.
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
 
-        st.write("Extracting text from pages...")
-        try:
-            raw_pages = extract_pages(pdf_path)
-            metadata = get_document_metadata(pdf_path)
-        except Exception as exc:
-            raise RuntimeError(f"Page extraction failed: {exc}") from exc
+    try:
+        pdf_path = save_uploaded_file(uploaded_file, upload_dir)
+        file_size = uploaded_file.size
+        print("FILE SAVED:", pdf_path)
+    except Exception as exc:
+        raise IOError(f"Failed to save uploaded file: {exc}") from exc
 
-        st.write("Validating and sanitising pages...")
-        pages = _sanitise_pages(raw_pages or [])
+    # ── STEP 1: PDF READ ──────────────────────────────────────────────────────
+    print("STEP 1: PDF READ")
+    try:
+        raw_pages = extract_pages(pdf_path)
+        metadata = get_document_metadata(pdf_path)
+        print("PDF METADATA:", metadata)
+    except Exception as exc:
+        raise RuntimeError(f"Page extraction failed: {exc}") from exc
 
-        if not pages:
-            raise ValueError(
-                "No pages could be extracted from this document. "
-                "The file may be corrupted or password-protected."
-            )
+    pages = _sanitise_pages(raw_pages or [])
+    print("PAGES:", len(pages))
 
-        if not _has_extractable_text(pages):
-            raise ValueError(
-                "No extractable text was found in this document. "
-                "The file may be image-only or scanned. OCR is not supported in this version."
-            )
-
-        st.write("Chunking text with metadata...")
-        try:
-            chunks = chunk_pages(pages, source_name=uploaded_file.name)
-        except Exception as exc:
-            raise RuntimeError(f"Chunking failed: {exc}") from exc
-
-        if not chunks:
-            raise ValueError(
-                "No chunks were produced from this document. "
-                "The extracted text may be too short or malformed."
-            )
-
-        total_chunks = len(chunks)
-
-        st.write("Generating embeddings and building vector index...")
-        try:
-            vector_db = VectorDB()
-            vector_db.add_chunks(chunks)
-        except RuntimeError as exc:
-            if "Embedding unavailable" in str(exc):
-                raise RuntimeError(
-                    "Embedding unavailable. The lightweight embedding model could not be loaded on this instance."
-                ) from exc
-            raise RuntimeError(
-                f"Embedding or vector index construction failed: {type(exc).__name__}: {exc}"
-            ) from exc
-        except Exception as exc:
-            raise RuntimeError(
-                f"Embedding or vector index construction failed: {type(exc).__name__}: {exc}"
-            ) from exc
-
-        try:
-            index_size = vector_db.index.ntotal if hasattr(vector_db.index, "ntotal") else None
-        except Exception:
-            index_size = None
-
-        if index_size is not None and index_size < _MIN_CHUNK_COUNT:
-            raise ValueError(
-                f"Vector index is empty after embedding ({index_size} vectors). "
-                "Embedding may have failed silently. Check your embedding model."
-            )
-
-        st.write("Initialising AI engines...")
-        try:
-            qa_engine = QAEngine(vector_db=vector_db)
-            summarizer = Summarizer()
-        except Exception as exc:
-            raise RuntimeError(f"AI engine initialisation failed: {exc}") from exc
-
-        processing_time = round(time.perf_counter() - pipeline_start, 3)
-        _log_pipeline_summary(pages, chunks, processing_time)
-
-        status.update(
-            label=f"Document indexed successfully. ({total_chunks} chunks | {processing_time}s)",
-            state="complete",
-            expanded=False,
+    if not pages:
+        raise ValueError(
+            "No pages could be extracted from this document. "
+            "The file may be corrupted or password-protected."
         )
 
-    return {
+    if not _has_extractable_text(pages):
+        raise ValueError(
+            "No extractable text was found in this document. "
+            "The file may be image-only or scanned. OCR is not supported in this version."
+        )
+
+    # ── STEP 2: CHUNKING ──────────────────────────────────────────────────────
+    print("STEP 2: CHUNKING")
+    try:
+        chunks = chunk_pages(pages, source_name=uploaded_file.name)
+    except Exception as exc:
+        raise RuntimeError(f"Chunking failed: {exc}") from exc
+
+    print("CHUNKS:", len(chunks))
+
+    if not chunks:
+        raise ValueError("No text extracted from PDF (possibly scanned PDF)")
+
+    total_chunks = len(chunks)
+
+    # ── STEP 3: EMBEDDING + VECTOR DB ─────────────────────────────────────────
+    print("STEP 3: EMBEDDING START")
+    vector_db = VectorDB()
+
+    try:
+        embeddings = vector_db.add_chunks(chunks)
+    except Exception as exc:
+        raise RuntimeError(f"Embedding failed: {exc}") from exc
+
+    print("EMBEDDINGS:", embeddings.shape if embeddings is not None else None)
+    print("VECTOR_DB:", vector_db is not None)
+
+    # ── STEP 4: VECTOR DB VALIDATION ──────────────────────────────────────────
+    print("STEP 4: VECTOR DB CREATED")
+    print("Total vectors:", vector_db.total_chunks)
+
+    if vector_db.total_chunks < _MIN_CHUNK_COUNT:
+        raise ValueError(
+            f"Vector index is empty after embedding ({vector_db.total_chunks} vectors). "
+            "Embedding may have failed silently."
+        )
+
+    # ── STEP 5: QA ENGINE ─────────────────────────────────────────────────────
+    print("STEP 5: QA ENGINE READY")
+    try:
+        qa_engine = QAEngine(vector_db=vector_db)
+        summarizer = Summarizer()
+        print("QA ENGINE READY:", hasattr(qa_engine, "answer"))
+    except Exception as exc:
+        raise RuntimeError(f"AI engine initialisation failed: {exc}") from exc
+
+    if qa_engine is None:
+        raise ValueError("qa_engine not created")
+
+    processing_time = round(time.time() - start_time, 2)
+    _log_pipeline_summary(pages, chunks, processing_time)
+
+    result = {
         "pdf_path": pdf_path,
         "document_hash": document_hash,
         "metadata": metadata,
         "file_size": file_size,
         "pages": pages,
         "chunks": chunks,
+        "embeddings": embeddings,
         "vector_db": vector_db,
         "qa_engine": qa_engine,
         "summarizer": summarizer,
         "processing_time": processing_time,
         "total_chunks": total_chunks,
     }
+    print("PIPELINE COMPLETE")
+    return result

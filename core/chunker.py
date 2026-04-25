@@ -75,6 +75,7 @@ def chunk_pages(
             )
             chunk_id += 1
 
+    print("CHUNKS CREATED:", len(all_chunks))
     return all_chunks
 
 

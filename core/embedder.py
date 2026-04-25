@@ -4,6 +4,11 @@ embedder.py - Memory-efficient sentence embeddings for DocuMind.
 The model is imported and loaded lazily so Streamlit startup stays light on
 Render. Embeddings are returned as normalised float32 arrays for efficient
 FAISS cosine-similarity search.
+
+Memory budget (Render free tier, 512 MB):
+  - all-MiniLM-L6-v2 at rest : ~22 MB RAM
+  - batch_size=4              : ~40 MB peak activation per encode() call
+  - device="cpu"              : avoids CUDA allocator overhead (~100 MB)
 """
 
 from __future__ import annotations
@@ -12,7 +17,11 @@ from typing import List
 
 import numpy as np
 
-from core.config import EMBEDDING_BATCH_SIZE, EMBEDDING_DIM, EMBEDDING_MODEL
+from core.config import EMBEDDING_DIM
+
+# FIX [embedder 1]: batch size hardcoded to 4 to cap peak RAM on Render free tier.
+# Overrides whatever EMBEDDING_BATCH_SIZE is set to in config.
+_SAFE_BATCH_SIZE = 4
 
 _model = None
 
@@ -28,7 +37,11 @@ def get_model():
                 "sentence-transformers is required: pip install sentence-transformers"
             ) from exc
 
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        print("EMBEDDER MODEL LOADING")
+        # FIX: model name and device pinned — never reads from config so
+        # a misconfigured EMBEDDING_MODEL env var cannot cause an OOM crash.
+        _model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        print("EMBEDDER MODEL READY")
     return _model
 
 
@@ -37,8 +50,8 @@ def embed_texts(texts: List[str]) -> np.ndarray:
     Encode a list of strings into a normalized float32 embedding matrix.
 
     Raises:
-        ValueError: If texts is empty.
-        RuntimeError: If the embedding model cannot be loaded.
+        ValueError: If texts is empty or contains only whitespace.
+        RuntimeError: If the embedding model cannot be loaded or returns bad data.
     """
     if not texts:
         raise ValueError("Cannot embed an empty list of texts.")
@@ -54,12 +67,24 @@ def embed_texts(texts: List[str]) -> np.ndarray:
 
     embeddings = model.encode(
         cleaned_texts,
-        batch_size=EMBEDDING_BATCH_SIZE,
+        batch_size=_SAFE_BATCH_SIZE,   # FIX: always 4, not from config
         convert_to_numpy=True,
         show_progress_bar=False,
         normalize_embeddings=True,
     )
-    return np.asarray(embeddings, dtype=np.float32)
+    embeddings = np.asarray(embeddings, dtype=np.float32)
+
+    if embeddings.size == 0:
+        raise RuntimeError("Embedding model returned an empty array.")
+    if embeddings.ndim != 2:
+        raise RuntimeError(f"Expected 2D embeddings, got shape {embeddings.shape}.")
+    if embeddings.shape[0] != len(cleaned_texts):
+        raise RuntimeError(
+            f"Embedding count mismatch: expected {len(cleaned_texts)}, got {embeddings.shape[0]}."
+        )
+
+    print("EMBEDDINGS CREATED:", embeddings.shape)
+    return embeddings
 
 
 def embed_query(query: str) -> np.ndarray:

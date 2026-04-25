@@ -30,8 +30,10 @@ class VectorDB:
         self.dim: int = get_embedding_dim()
         self.index: faiss.IndexFlatIP = faiss.IndexFlatIP(self.dim)
         self.chunks: List[Dict[str, Any]] = []
+        self.last_embeddings: np.ndarray | None = None
+        print("VECTOR DB INITIALIZED:", self.dim)
 
-    def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
+    def add_chunks(self, chunks: List[Dict[str, Any]]) -> np.ndarray:
         """Embed and add chunk dicts to the index."""
         if not chunks:
             raise ValueError("Cannot index an empty chunk list.")
@@ -66,8 +68,14 @@ class VectorDB:
 
         texts = [chunk["text"] for chunk in unique_chunks]
         vectors = np.ascontiguousarray(embed_texts(texts), dtype=np.float32)
+        if vectors.shape[0] == 0:
+            raise ValueError("No vectors were generated for indexing.")
+
         self.index.add(vectors)
         self.chunks.extend(unique_chunks)
+        self.last_embeddings = vectors
+        print("VECTOR DB BUILT:", self.index.ntotal)
+        return vectors
 
     def reset(self) -> None:
         """Drop all indexed vectors and associated metadata."""
