@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _MIN_PAGE_TEXT_LENGTH = 10
 _MIN_CHUNK_COUNT = 1
+MAX_CHUNKS = 40
 
 
 def _sanitise_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -143,6 +144,15 @@ def run_pipeline(
 
     if not chunks:
         raise ValueError("No text extracted from PDF (possibly scanned PDF)")
+
+    # Hard cap to prevent memory spikes during embedding and FAISS indexing
+    # on the Render free tier (512 MB). Chunks beyond MAX_CHUNKS are dropped
+    # from the index but the full page list is retained for display purposes.
+    if len(chunks) > MAX_CHUNKS:
+        print(f"Limiting chunks: {len(chunks)} → {MAX_CHUNKS}")
+        chunks = chunks[:MAX_CHUNKS]
+
+    print("FINAL CHUNKS USED:", len(chunks))
 
     total_chunks = len(chunks)
 

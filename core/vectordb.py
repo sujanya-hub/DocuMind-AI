@@ -22,6 +22,14 @@ except ImportError as exc:
 from core.config import TOP_K_RESULTS
 from core.embedder import embed_query, embed_texts, get_embedding_dim
 
+# Number of chunks embedded per FAISS add() call.
+# Kept at 5 to cap peak activation memory on the Render free tier (512 MB).
+# Each batch of 5 × 384-dim float32 vectors ≈ 7.5 KB — negligible on its own,
+# but the SentenceTransformer encoder is the memory driver: batch_size=2 in
+# embedder.py × _EMBED_BATCH_SIZE=5 here means at most 10 texts in flight at
+# any moment, keeping peak well below the OOM threshold.
+_EMBED_BATCH_SIZE = 5
+
 
 class VectorDB:
     """In-memory FAISS index paired with compact chunk metadata."""
@@ -34,7 +42,18 @@ class VectorDB:
         print("VECTOR DB INITIALIZED:", self.dim)
 
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> np.ndarray:
-        """Embed and add chunk dicts to the index."""
+        """
+        Embed and add chunk dicts to the index in small batches.
+
+        Batching keeps peak memory flat regardless of document size by
+        embedding _EMBED_BATCH_SIZE chunks at a time and adding each batch
+        to the FAISS index immediately before the next batch is encoded.
+
+        Returns:
+            The full stacked embedding matrix (all chunks × dim) as a
+            contiguous float32 array — identical return type to the previous
+            single-shot implementation so callers are unaffected.
+        """
         if not chunks:
             raise ValueError("Cannot index an empty chunk list.")
 
@@ -51,15 +70,14 @@ class VectorDB:
                 continue
             seen_texts.add(fingerprint)
 
-            # Keep stored metadata compact to reduce memory pressure on Render.
             unique_chunks.append(
                 {
-                    "chunk_id": chunk.get("chunk_id"),
-                    "text": text,
+                    "chunk_id":   chunk.get("chunk_id"),
+                    "text":       text,
                     "page_number": chunk.get("page_number"),
-                    "source": chunk.get("source"),
+                    "source":     chunk.get("source"),
                     "char_start": chunk.get("char_start"),
-                    "char_end": chunk.get("char_end"),
+                    "char_end":   chunk.get("char_end"),
                 }
             )
 
@@ -67,15 +85,24 @@ class VectorDB:
             raise ValueError("No non-empty chunks were available for indexing.")
 
         texts = [chunk["text"] for chunk in unique_chunks]
-        vectors = np.ascontiguousarray(embed_texts(texts), dtype=np.float32)
-        if vectors.shape[0] == 0:
-            raise ValueError("No vectors were generated for indexing.")
 
-        self.index.add(vectors)
+        # Embed in small batches and add each batch to FAISS immediately.
+        # This replaces the previous single embed_texts(texts) call that
+        # materialised all vectors in RAM at once before any were indexed.
+        all_vectors: List[np.ndarray] = []
+
+        for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+            batch = texts[i : i + _EMBED_BATCH_SIZE]
+            vectors = embed_texts(batch)
+            vectors = np.ascontiguousarray(vectors, dtype=np.float32)
+            self.index.add(vectors)
+            all_vectors.append(vectors)
+
         self.chunks.extend(unique_chunks)
-        self.last_embeddings = vectors
+        self.last_embeddings = np.vstack(all_vectors)
+
         print("VECTOR DB BUILT:", self.index.ntotal)
-        return vectors
+        return self.last_embeddings
 
     def reset(self) -> None:
         """Drop all indexed vectors and associated metadata."""
@@ -94,7 +121,9 @@ class VectorDB:
             raise ValueError("Query must not be blank.")
 
         top_k = min(top_k, self.index.ntotal)
-        q_vec = np.ascontiguousarray(embed_query(query).reshape(1, -1), dtype=np.float32)
+        q_vec = np.ascontiguousarray(
+            embed_query(query).reshape(1, -1), dtype=np.float32
+        )
         scores, indices = self.index.search(q_vec, top_k)
 
         results: List[Dict[str, Any]] = []
