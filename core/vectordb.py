@@ -22,12 +22,6 @@ except ImportError as exc:
 from core.config import TOP_K_RESULTS
 from core.embedder import embed_query, embed_texts, get_embedding_dim
 
-# Number of chunks embedded per FAISS add() call.
-# Kept at 5 to cap peak activation memory on the Render free tier (512 MB).
-# Each batch of 5 × 384-dim float32 vectors ≈ 7.5 KB — negligible on its own,
-# but the SentenceTransformer encoder is the memory driver: batch_size=2 in
-# embedder.py × _EMBED_BATCH_SIZE=5 here means at most 10 texts in flight at
-# any moment, keeping peak well below the OOM threshold.
 _EMBED_BATCH_SIZE = 5
 
 
@@ -38,21 +32,21 @@ class VectorDB:
         self.dim: int = get_embedding_dim()
         self.index: faiss.IndexFlatIP = faiss.IndexFlatIP(self.dim)
         self.chunks: List[Dict[str, Any]] = []
-        self.last_embeddings: np.ndarray | None = None
+        # FIX #1: Removed self.last_embeddings — storing the full embedding
+        # matrix on the object created a permanent duplicate of all vectors
+        # in RAM alongside the FAISS index itself (double memory cost).
         print("VECTOR DB INITIALIZED:", self.dim)
 
-    def add_chunks(self, chunks: List[Dict[str, Any]]) -> np.ndarray:
+    def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """
         Embed and add chunk dicts to the index in small batches.
 
-        Batching keeps peak memory flat regardless of document size by
-        embedding _EMBED_BATCH_SIZE chunks at a time and adding each batch
-        to the FAISS index immediately before the next batch is encoded.
-
-        Returns:
-            The full stacked embedding matrix (all chunks × dim) as a
-            contiguous float32 array — identical return type to the previous
-            single-shot implementation so callers are unaffected.
+        FIX #2: Return type changed from np.ndarray to None.
+        Previously this method returned np.vstack(all_vectors) which:
+          (a) re-allocated the entire embedding matrix a second time in RAM
+          (b) was stored in pipeline["embeddings"] and then in st.session_state
+              causing Streamlit to serialize/pickle it on every rerun.
+        Now vectors are added to FAISS and immediately discarded.
         """
         if not chunks:
             raise ValueError("Cannot index an empty chunk list.")
@@ -72,12 +66,12 @@ class VectorDB:
 
             unique_chunks.append(
                 {
-                    "chunk_id":   chunk.get("chunk_id"),
-                    "text":       text,
+                    "chunk_id":    chunk.get("chunk_id"),
+                    "text":        text,
                     "page_number": chunk.get("page_number"),
-                    "source":     chunk.get("source"),
-                    "char_start": chunk.get("char_start"),
-                    "char_end":   chunk.get("char_end"),
+                    "source":      chunk.get("source"),
+                    "char_start":  chunk.get("char_start"),
+                    "char_end":    chunk.get("char_end"),
                 }
             )
 
@@ -87,22 +81,19 @@ class VectorDB:
         texts = [chunk["text"] for chunk in unique_chunks]
 
         # Embed in small batches and add each batch to FAISS immediately.
-        # This replaces the previous single embed_texts(texts) call that
-        # materialised all vectors in RAM at once before any were indexed.
-        all_vectors: List[np.ndarray] = []
-
+        # FIX #3: Do NOT collect all_vectors for vstack — discard each batch
+        # after FAISS ingests it so peak memory = 1 batch at a time.
         for i in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[i : i + _EMBED_BATCH_SIZE]
             vectors = embed_texts(batch)
             vectors = np.ascontiguousarray(vectors, dtype=np.float32)
             self.index.add(vectors)
-            all_vectors.append(vectors)
+            # vectors goes out of scope here — GC can reclaim immediately
 
         self.chunks.extend(unique_chunks)
-        self.last_embeddings = np.vstack(all_vectors)
 
         print("VECTOR DB BUILT:", self.index.ntotal)
-        return self.last_embeddings
+        # Return None — callers must not depend on the embedding matrix
 
     def reset(self) -> None:
         """Drop all indexed vectors and associated metadata."""

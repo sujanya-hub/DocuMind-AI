@@ -1007,7 +1007,6 @@ st.markdown("<div class='eyebrow'>DocuMind</div>", unsafe_allow_html=True)
 _render_hero()
 
 # Temporary debug line — remove once session state is confirmed stable
-st.write("PIPELINE EXISTS:", st.session_state.get("pipeline") is not None)
 
 if st.session_state.processing_error:
     st.error(f"Processing failed: {st.session_state.processing_error}")

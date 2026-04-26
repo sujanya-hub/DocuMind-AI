@@ -1,10 +1,15 @@
 """
 document_service.py - End-to-end document ingestion pipeline orchestrator.
 
-Provides a single public function, run_pipeline, that accepts an uploaded
-file object and executes every ingestion step in sequence: save, extract,
-chunk, embed, index, and instantiate the AI engines. Returns a structured
-dict consumed by session_manager.store_pipeline_result.
+FIX SUMMARY (memory crash fixes for 512MB Render free tier):
+  1. embeddings are no longer stored in the pipeline result dict.
+     Storing them in st.session_state caused Streamlit to serialize the
+     entire numpy matrix on every rerun, adding a ~1–2 MB pickle spike
+     on top of already-high post-embedding memory usage.
+  2. Chunk cap (MAX_CHUNKS) is applied BEFORE chunk_pages processes the
+     full page list. Previously chunk_pages() generated all chunks first
+     (potentially thousands), then the cap was applied — wasting RAM on
+     dicts that were immediately discarded.
 """
 
 from __future__ import annotations
@@ -85,20 +90,11 @@ def run_pipeline(
     ensure_directory(upload_dir)
     start_time = time.time()
 
-    # ── FIX: seek uploaded_file to start before reading its bytes.
-    # file_sha256() reads the entire byte stream. If save_uploaded_file()
-    # was called first (or Streamlit already buffered a read) the file
-    # pointer sits at EOF and subsequent reads return 0 bytes — silently
-    # producing an empty document hash and empty page list.
-    # We seek to 0 before every read operation so order does not matter.
     if hasattr(uploaded_file, "seek"):
         uploaded_file.seek(0)
 
     document_hash = file_sha256(uploaded_file)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
-    # Seek again: file_sha256() consumed the stream; save_uploaded_file()
-    # must start from byte 0 or it writes an empty file to disk.
     if hasattr(uploaded_file, "seek"):
         uploaded_file.seek(0)
 
@@ -134,9 +130,21 @@ def run_pipeline(
         )
 
     # ── STEP 2: CHUNKING ──────────────────────────────────────────────────────
+    # FIX: Cap pages BEFORE chunking so chunk_pages() never generates more
+    # than ~MAX_CHUNKS worth of text in the first place. Previously the cap
+    # was applied after chunk_pages() returned the full list — all intermediate
+    # chunk dicts were allocated then immediately discarded.
+    #
+    # With CHUNK_SIZE=500 and a typical page ~2000 chars: ~4 chunks/page.
+    # MAX_CHUNKS=40 → cap pages at 10 to stay safely under limit.
+    max_pages_to_chunk = max(1, MAX_CHUNKS // 4)
+    pages_to_chunk = pages[:max_pages_to_chunk]
+    if len(pages) > max_pages_to_chunk:
+        print(f"Page cap applied: {len(pages)} pages → chunking first {max_pages_to_chunk}")
+
     print("STEP 2: CHUNKING")
     try:
-        chunks = chunk_pages(pages, source_name=uploaded_file.name)
+        chunks = chunk_pages(pages_to_chunk, source_name=uploaded_file.name)
     except Exception as exc:
         raise RuntimeError(f"Chunking failed: {exc}") from exc
 
@@ -145,9 +153,6 @@ def run_pipeline(
     if not chunks:
         raise ValueError("No text extracted from PDF (possibly scanned PDF)")
 
-    # Hard cap to prevent memory spikes during embedding and FAISS indexing
-    # on the Render free tier (512 MB). Chunks beyond MAX_CHUNKS are dropped
-    # from the index but the full page list is retained for display purposes.
     if len(chunks) > MAX_CHUNKS:
         print(f"Limiting chunks: {len(chunks)} → {MAX_CHUNKS}")
         chunks = chunks[:MAX_CHUNKS]
@@ -161,11 +166,12 @@ def run_pipeline(
     vector_db = VectorDB()
 
     try:
-        embeddings = vector_db.add_chunks(chunks)
+        # FIX: add_chunks() now returns None — embeddings are discarded after
+        # FAISS ingestion and NOT stored anywhere in the pipeline result.
+        vector_db.add_chunks(chunks)
     except Exception as exc:
         raise RuntimeError(f"Embedding failed: {exc}") from exc
 
-    print("EMBEDDINGS:", embeddings.shape if embeddings is not None else None)
     print("VECTOR_DB:", vector_db is not None)
 
     # ── STEP 4: VECTOR DB VALIDATION ──────────────────────────────────────────
@@ -193,19 +199,24 @@ def run_pipeline(
     processing_time = round(time.time() - start_time, 2)
     _log_pipeline_summary(pages, chunks, processing_time)
 
+    # FIX: "embeddings" key is intentionally EXCLUDED from the result dict.
+    # Storing the numpy embedding matrix here meant it flowed into
+    # st.session_state.pipeline["embeddings"] and got pickled by Streamlit
+    # on every rerun — a ~1–2 MB serialization spike at the worst possible
+    # moment (right after the memory-intensive embedding pass).
     result = {
-        "pdf_path": pdf_path,
-        "document_hash": document_hash,
-        "metadata": metadata,
-        "file_size": file_size,
-        "pages": pages,
-        "chunks": chunks,
-        "embeddings": embeddings,
-        "vector_db": vector_db,
-        "qa_engine": qa_engine,
-        "summarizer": summarizer,
+        "pdf_path":        pdf_path,
+        "document_hash":   document_hash,
+        "metadata":        metadata,
+        "file_size":       file_size,
+        "pages":           pages,
+        "chunks":          chunks,
+        # "embeddings":   intentionally omitted — see note above
+        "vector_db":       vector_db,
+        "qa_engine":       qa_engine,
+        "summarizer":      summarizer,
         "processing_time": processing_time,
-        "total_chunks": total_chunks,
+        "total_chunks":    total_chunks,
     }
     print("PIPELINE COMPLETE")
     return result

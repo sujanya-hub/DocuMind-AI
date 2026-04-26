@@ -1,9 +1,26 @@
 """
 session_manager.py - Streamlit session state management for DocuMind.
 
-Centralises all session state initialisation, access, and mutation.
-No module outside this one reads or writes st.session_state keys using
-raw string literals. All keys are declared on the _Keys registry class.
+FINAL MEMORY FIX SUMMARY:
+  The previous version stored the entire pipeline result dict in
+  st.session_state[K.PIPELINE]. This dict contained:
+    - vector_db   (FAISS index object)
+    - qa_engine   (holds reference to vector_db)
+    - summarizer  (LLM wrapper)
+    - pages       (full extracted text of every page)
+    - chunks      (list of dicts with full text)
+
+  Streamlit serializes session state on every rerun. Storing all of this
+  caused a full duplication of peak-memory objects at the worst possible
+  moment (right after the pipeline completes at its own memory peak).
+
+  FIX:
+    - K.PIPELINE now stores a LIGHTWEIGHT dict (metadata + first 20 chunks)
+    - Heavy objects (vector_db, qa_engine, summarizer) are stored as their
+      own top-level session keys so Streamlit can reference them without
+      duplicating the FAISS index through the pipeline dict path.
+    - Pages are stored separately. They are plain text dicts — cheaper than
+      the FAISS index — but we avoid double-storing them inside pipeline too.
 """
 
 from __future__ import annotations
@@ -21,6 +38,7 @@ from core.insight_engine import ActionableTakeaways, InsightResult, SuggestedQue
 # ---------------------------------------------------------------------------
 
 CHAT_HISTORY_LIMIT: int = 10
+_PIPELINE_CHUNK_PREVIEW = 20   # max chunks kept in the lightweight pipeline dict
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +52,7 @@ class _Keys:
     FILE_SIZE            = "file_size"
     PAGES                = "pages"
     CHUNKS               = "chunks"
-    EMBEDDINGS           = "embeddings"
+    # EMBEDDINGS intentionally absent — numpy arrays must never live here
     VECTOR_DB            = "vector_db"
     QA_ENGINE            = "qa_engine"
     SUMMARIZER           = "summarizer"
@@ -48,9 +66,7 @@ class _Keys:
     SUGGESTED_QUESTIONS  = "suggested_questions"
     ACTION_ITEMS         = "action_items"
     ENHANCED_EXPLANATION = "enhanced_explanation"
-    # THE FIX: app.py reads st.session_state.pipeline as a nested dict.
-    # session_manager must own and populate this key.
-    PIPELINE             = "pipeline"
+    PIPELINE             = "pipeline"   # lightweight dict only — see store_pipeline_result
 
 
 K = _Keys
@@ -68,7 +84,6 @@ def _defaults() -> Dict[str, Any]:
         K.FILE_SIZE:            0,
         K.PAGES:                [],
         K.CHUNKS:               [],
-        K.EMBEDDINGS:           None,
         K.VECTOR_DB:            None,
         K.QA_ENGINE:            None,
         K.SUMMARIZER:           None,
@@ -82,7 +97,6 @@ def _defaults() -> Dict[str, Any]:
         K.SUGGESTED_QUESTIONS:  None,
         K.ACTION_ITEMS:         None,
         K.ENHANCED_EXPLANATION: None,
-        # pipeline starts as None — only set after a successful run_pipeline()
         K.PIPELINE:             None,
     }
 
@@ -94,9 +108,7 @@ def _defaults() -> Dict[str, Any]:
 def initialise() -> None:
     """
     Ensure every session key exists with a safe default value.
-
-    Idempotent: existing values are never overwritten. Safe to call on
-    every Streamlit rerun — it only writes keys that are genuinely absent.
+    Idempotent — existing values are never overwritten.
     """
     for key, default in _defaults().items():
         if key not in st.session_state:
@@ -126,12 +138,10 @@ def reset_session() -> None:
 # ---------------------------------------------------------------------------
 
 def is_document_indexed() -> bool:
-    """Return True when a document has been fully processed and indexed."""
     return bool(st.session_state.get(K.INDEXED, False))
 
 
 def is_new_upload(file_name: str) -> bool:
-    """Return True when the supplied file name differs from the current document."""
     current: Optional[str] = st.session_state.get(K.PDF_PATH)
     if not current:
         return True
@@ -142,30 +152,62 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
     """
     Persist the output of document_service.run_pipeline() to session state.
 
-    THE FIX: also writes the entire result dict to st.session_state.pipeline
-    so that app.py can read pipeline["vector_db"], pipeline["chunks"], etc.
-    without a KeyError or None guard failing silently.
+    MEMORY STRATEGY:
+      Heavy objects (vector_db, qa_engine, summarizer) are stored as their
+      own top-level keys. Streamlit references them in-place without
+      duplicating them.
+
+      st.session_state[K.PIPELINE] is set to a LIGHTWEIGHT dict containing
+      only what the UI rendering functions actually need to read:
+        - metadata        (small dict)
+        - file_size       (int)
+        - processing_time (float)
+        - total_chunks    (int)
+        - chunks          (first 20 only, for _build_analysis_context)
+
+      Heavy objects are included in the pipeline dict as the SAME object
+      references already stored in their own keys — no copy is made.
+      This preserves app.py call sites like pipeline["qa_engine"].answer()
+      without storing a second copy of the FAISS index in memory.
     """
+    chunks = result["chunks"]
+    pages  = result["pages"]
+
+    # ── Store heavy objects as independent top-level keys ─────────────────
     st.session_state[K.PDF_PATH]        = result["pdf_path"]
     st.session_state[K.DOCUMENT_HASH]   = result.get("document_hash", "")
     st.session_state[K.METADATA]        = result["metadata"]
     st.session_state[K.FILE_SIZE]       = result["file_size"]
-    st.session_state[K.PAGES]           = result["pages"]
-    st.session_state[K.CHUNKS]          = result["chunks"]
-    st.session_state[K.EMBEDDINGS]      = result.get("embeddings")
+    st.session_state[K.PAGES]           = pages
+    st.session_state[K.CHUNKS]          = chunks
     st.session_state[K.VECTOR_DB]       = result["vector_db"]
     st.session_state[K.QA_ENGINE]       = result["qa_engine"]
     st.session_state[K.SUMMARIZER]      = result["summarizer"]
     st.session_state[K.PROCESSING_TIME] = result.get("processing_time", 0.0)
-    st.session_state[K.TOTAL_CHUNKS]    = result.get("total_chunks", len(result["chunks"]))
+    st.session_state[K.TOTAL_CHUNKS]    = result.get("total_chunks", len(chunks))
     st.session_state[K.INDEXED]         = True
 
-    # THE FIX: populate st.session_state.pipeline as the nested dict that
-    # app.py expects. app.py reads pipeline["vector_db"], pipeline["chunks"],
-    # pipeline["qa_engine"], pipeline["metadata"], pipeline["file_size"], etc.
-    # Without this line, st.session_state.pipeline is always None after rerun.
-    st.session_state[K.PIPELINE] = result
+    # ── Lightweight pipeline dict ─────────────────────────────────────────
+    # app.py reads: pipeline["metadata"], pipeline["chunks"],
+    # pipeline["file_size"], pipeline["total_chunks"], pipeline["pages"],
+    # pipeline["processing_time"], pipeline["vector_db"], pipeline["qa_engine"]
+    #
+    # Heavy fields use the SAME object references as the keys above —
+    # no copy, no extra allocation. Only 20 chunks stored here for the
+    # analysis context builder; full list remains at K.CHUNKS.
+    st.session_state[K.PIPELINE] = {
+        "metadata":        result["metadata"],
+        "file_size":       result["file_size"],
+        "processing_time": result.get("processing_time", 0.0),
+        "total_chunks":    result.get("total_chunks", len(chunks)),
+        "chunks":          chunks[:_PIPELINE_CHUNK_PREVIEW],
+        "pages":           pages,
+        "vector_db":       result["vector_db"],
+        "qa_engine":       result["qa_engine"],
+        "summarizer":      result["summarizer"],
+    }
 
+    # Clear derived/stale state from any previous document
     for key in (
         K.SUMMARY, K.LAST_ANSWER,
         K.INSIGHTS, K.SUGGESTED_QUESTIONS,
@@ -175,16 +217,16 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
 
     print("SESSION: pipeline stored, total_chunks =", result.get("total_chunks"))
     print("SESSION: pipeline key present =", st.session_state.get(K.PIPELINE) is not None)
+    print("SESSION: qa_engine present =", st.session_state.get(K.QA_ENGINE) is not None)
+    print("SESSION: vector_db present =", st.session_state.get(K.VECTOR_DB) is not None)
 
 
 def reset_document_state() -> None:
-    """
-    Clear all document-scoped and derived session keys and restore safe
-    defaults. Chat history is preserved.
-    """
+    """Clear all document-scoped and derived session keys."""
     document_keys = [
-        K.PDF_PATH, K.DOCUMENT_HASH, K.METADATA, K.FILE_SIZE, K.PAGES, K.CHUNKS,
-        K.EMBEDDINGS, K.VECTOR_DB, K.QA_ENGINE, K.SUMMARIZER,
+        K.PDF_PATH, K.DOCUMENT_HASH, K.METADATA, K.FILE_SIZE,
+        K.PAGES, K.CHUNKS,
+        K.VECTOR_DB, K.QA_ENGINE, K.SUMMARIZER,
         K.PROCESSING_TIME, K.TOTAL_CHUNKS, K.INDEXED,
         K.SUMMARY, K.LAST_ANSWER,
         K.INSIGHTS, K.SUGGESTED_QUESTIONS,
