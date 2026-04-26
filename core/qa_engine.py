@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+import streamlit as st
+
 from core.ai_engine import generate_response
 from core.config import MAX_TOKENS, TEMPERATURE, TOP_K_RESULTS
 from core.vectordb import VectorDB
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _MIN_CHUNK_CHARS = 30    # chunks shorter than this are treated as noise
-_MAX_CONTEXT_CHARS = 12_000
+_MAX_CONTEXT_CHARS = 6000
 
 _SYSTEM_PROMPT = """\
 You are DocuMind Analyst, a precision document analysis assistant.
@@ -115,10 +117,11 @@ class QAEngine:
             )
         except Exception as exc:
             logger.error("[QAEngine] LLM call failed: %s", exc)
+            st.warning("⚠️ LLM temporarily unavailable. Try again.")
             answer_text = (
                 "The document was indexed successfully, but the LLM request "
-                "could not be completed. Confirm GROQ_API_KEY is set in the "
-                f"environment. Details: {type(exc).__name__}: {exc}"
+                "could not be completed. Confirm GROQ_API_KEY is set in "
+                f"Streamlit secrets. Details: {type(exc).__name__}: {exc}"
             )
 
         if not answer_text or not answer_text.strip():

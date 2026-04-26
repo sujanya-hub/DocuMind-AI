@@ -52,6 +52,7 @@ class _Keys:
     FILE_SIZE            = "file_size"
     PAGES                = "pages"
     CHUNKS               = "chunks"
+    ANALYSIS_CHUNKS      = "analysis_chunks"
     # EMBEDDINGS intentionally absent — numpy arrays must never live here
     VECTOR_DB            = "vector_db"
     QA_ENGINE            = "qa_engine"
@@ -84,6 +85,7 @@ def _defaults() -> Dict[str, Any]:
         K.FILE_SIZE:            0,
         K.PAGES:                [],
         K.CHUNKS:               [],
+        K.ANALYSIS_CHUNKS:      [],
         K.VECTOR_DB:            None,
         K.QA_ENGINE:            None,
         K.SUMMARIZER:           None,
@@ -170,19 +172,29 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
       This preserves app.py call sites like pipeline["qa_engine"].answer()
       without storing a second copy of the FAISS index in memory.
     """
-    chunks = result["chunks"]
-    pages  = result["pages"]
+    chunks = result.get("chunks", [])
+    analysis_chunks = [
+        {
+            "chunk_id": chunk.get("chunk_id"),
+            "text": chunk.get("text", ""),
+            "page_number": chunk.get("page_number"),
+            "source": chunk.get("source"),
+        }
+        for chunk in chunks[:_PIPELINE_CHUNK_PREVIEW]
+        if isinstance(chunk, dict)
+    ]
 
     # ── Store heavy objects as independent top-level keys ─────────────────
     st.session_state[K.PDF_PATH]        = result["pdf_path"]
     st.session_state[K.DOCUMENT_HASH]   = result.get("document_hash", "")
     st.session_state[K.METADATA]        = result["metadata"]
     st.session_state[K.FILE_SIZE]       = result["file_size"]
-    st.session_state[K.PAGES]           = pages
-    st.session_state[K.CHUNKS]          = chunks
+    st.session_state[K.PAGES]           = []
+    st.session_state[K.CHUNKS]          = []
+    st.session_state[K.ANALYSIS_CHUNKS] = analysis_chunks
     st.session_state[K.VECTOR_DB]       = result["vector_db"]
     st.session_state[K.QA_ENGINE]       = result["qa_engine"]
-    st.session_state[K.SUMMARIZER]      = result["summarizer"]
+    st.session_state[K.SUMMARIZER]      = None
     st.session_state[K.PROCESSING_TIME] = result.get("processing_time", 0.0)
     st.session_state[K.TOTAL_CHUNKS]    = result.get("total_chunks", len(chunks))
     st.session_state[K.INDEXED]         = True
@@ -200,11 +212,8 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
         "file_size":       result["file_size"],
         "processing_time": result.get("processing_time", 0.0),
         "total_chunks":    result.get("total_chunks", len(chunks)),
-        "chunks":          chunks[:_PIPELINE_CHUNK_PREVIEW],
-        "pages":           pages,
         "vector_db":       result["vector_db"],
         "qa_engine":       result["qa_engine"],
-        "summarizer":      result["summarizer"],
     }
 
     # Clear derived/stale state from any previous document
@@ -215,17 +224,11 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
     ):
         st.session_state[key] = None
 
-    print("SESSION: pipeline stored, total_chunks =", result.get("total_chunks"))
-    print("SESSION: pipeline key present =", st.session_state.get(K.PIPELINE) is not None)
-    print("SESSION: qa_engine present =", st.session_state.get(K.QA_ENGINE) is not None)
-    print("SESSION: vector_db present =", st.session_state.get(K.VECTOR_DB) is not None)
-
-
 def reset_document_state() -> None:
     """Clear all document-scoped and derived session keys."""
     document_keys = [
         K.PDF_PATH, K.DOCUMENT_HASH, K.METADATA, K.FILE_SIZE,
-        K.PAGES, K.CHUNKS,
+        K.PAGES, K.CHUNKS, K.ANALYSIS_CHUNKS,
         K.VECTOR_DB, K.QA_ENGINE, K.SUMMARIZER,
         K.PROCESSING_TIME, K.TOTAL_CHUNKS, K.INDEXED,
         K.SUMMARY, K.LAST_ANSWER,

@@ -15,6 +15,11 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
+try:
+    import streamlit as st
+except Exception:  # pragma: no cover - safe fallback outside Streamlit runtime
+    st = None
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -52,6 +57,18 @@ def _as_str(key: str, default: str) -> str:
     return str(os.environ.get(key, default)).strip()
 
 
+def _get_secret(key: str, default: str = "") -> str:
+    """Read a Streamlit secret when available, otherwise fall back safely."""
+    if st is not None:
+        try:
+            value = st.secrets.get(key)
+            if value is not None:
+                return str(value).strip()
+        except Exception:
+            pass
+    return _as_str(key, default)
+
+
 def _debug_env_status(config: AppConfig) -> None:
     """Optionally log which environment-driven settings are present."""
     if _as_str("DOCUMIND_DEBUG_CONFIG", "").lower() not in {"1", "true", "yes", "on"}:
@@ -87,7 +104,7 @@ def get_config() -> AppConfig:
         chunk_overlap = max(0, chunk_size // 5)
 
     config = AppConfig(
-        groq_api_key=_as_str("GROQ_API_KEY", ""),
+        groq_api_key=_get_secret("GROQ_API_KEY", ""),
         groq_model_name=_as_str("GROQ_MODEL_NAME", "llama-3.1-8b-instant"),
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -125,8 +142,8 @@ def validate_config() -> None:
         return
 
     raise EnvironmentError(
-        "Missing GROQ_API_KEY. Set it as an environment variable in the "
-        "Render dashboard under Environment > Environment Variables."
+        "Missing GROQ_API_KEY. Add it to Streamlit secrets "
+        "(.streamlit/secrets.toml locally or the Community Cloud secrets panel)."
     )
 
 

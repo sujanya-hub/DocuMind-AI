@@ -22,7 +22,7 @@ except ImportError as exc:
 from core.config import TOP_K_RESULTS
 from core.embedder import embed_query, embed_texts, get_embedding_dim
 
-_EMBED_BATCH_SIZE = 5
+_EMBED_BATCH_SIZE = 2
 
 
 class VectorDB:
@@ -35,8 +35,6 @@ class VectorDB:
         # FIX #1: Removed self.last_embeddings — storing the full embedding
         # matrix on the object created a permanent duplicate of all vectors
         # in RAM alongside the FAISS index itself (double memory cost).
-        print("VECTOR DB INITIALIZED:", self.dim)
-
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """
         Embed and add chunk dicts to the index in small batches.
@@ -91,8 +89,6 @@ class VectorDB:
             # vectors goes out of scope here — GC can reclaim immediately
 
         self.chunks.extend(unique_chunks)
-
-        print("VECTOR DB BUILT:", self.index.ntotal)
         # Return None — callers must not depend on the embedding matrix
 
     def reset(self) -> None:

@@ -25,7 +25,7 @@ except ImportError as exc:
 # Public API
 # ---------------------------------------------------------------------------
 
-def extract_pages(pdf_path: str) -> List[Dict[str, Any]]:
+def extract_pages(pdf_path: str, max_pages: int | None = None) -> List[Dict[str, Any]]:
     """
     Extract text from every page of a PDF file.
 
@@ -45,10 +45,8 @@ def extract_pages(pdf_path: str) -> List[Dict[str, Any]]:
     # files with the same filename within the same second share a cache hit
     # and the second upload silently returns stale pages.
     content_hash = _file_sha256(pdf_path)
-    payload = _read_pdf_payload(pdf_path, content_hash)
+    payload = _read_pdf_payload(pdf_path, content_hash, max_pages=max_pages)
     pages = list(payload["pages"])
-    print("PDF LOADED")
-    print("PAGES EXTRACTED:", len(pages))
     return pages
 
 
@@ -69,9 +67,20 @@ def get_document_metadata(pdf_path: str) -> Dict[str, Any]:
         ValueError:        If the file cannot be opened as a PDF.
     """
     _assert_file_exists(pdf_path)
-    content_hash = _file_sha256(pdf_path)
-    payload = _read_pdf_payload(pdf_path, content_hash)
-    return dict(payload["metadata"])
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as exc:
+        raise ValueError(f"Cannot open PDF '{pdf_path}': {exc}") from exc
+
+    with doc:
+        meta = doc.metadata or {}
+        return {
+            "file_name": os.path.basename(pdf_path),
+            "page_count": doc.page_count,
+            "title": meta.get("title", "Unknown") or "Unknown",
+            "author": meta.get("author", "Unknown") or "Unknown",
+            "subject": meta.get("subject", "") or "",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +125,14 @@ def _clean_text(text: str) -> str:
 # both extract_pages() and get_document_metadata() calls in run_pipeline().
 #
 # Cache size stays at 16 — sufficient for any realistic session.
-_cache: Dict[str, Dict[str, Any]] = {}
+_cache: Dict[tuple[str, int | None], Dict[str, Any]] = {}
 
 
-def _read_pdf_payload(pdf_path: str, content_hash: str) -> Dict[str, Any]:
+def _read_pdf_payload(
+    pdf_path: str,
+    content_hash: str,
+    max_pages: int | None = None,
+) -> Dict[str, Any]:
     """
     Read the PDF once and cache both pages and metadata keyed on content hash.
 
@@ -127,10 +140,9 @@ def _read_pdf_payload(pdf_path: str, content_hash: str) -> Dict[str, Any]:
     all arguments must be hashable AND ensures the cache key is truly the file
     content, not the path or mtime.
     """
-    cache_key = content_hash
+    cache_key = (content_hash, max_pages)
 
     if cache_key in _cache:
-        print("PDF CACHE HIT:", pdf_path)
         return _cache[cache_key]
 
     pages: List[Dict[str, Any]] = []
@@ -142,6 +154,8 @@ def _read_pdf_payload(pdf_path: str, content_hash: str) -> Dict[str, Any]:
 
     with doc:
         for i, page in enumerate(doc, start=1):
+            if max_pages is not None and i > max_pages:
+                break
             cleaned = _clean_text(page.get_text("text") or "")
             pages.append(
                 {

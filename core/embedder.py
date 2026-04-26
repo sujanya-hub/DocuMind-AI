@@ -78,6 +78,10 @@ def embed_texts(texts: List[str]) -> np.ndarray:
             show_progress_bar=False,
             normalize_embeddings=True,
         )
+    except MemoryError as exc:
+        raise RuntimeError(
+            f"Out of memory during embedding (batch_size={_SAFE_BATCH_SIZE})"
+        ) from exc
     except Exception as exc:
         raise RuntimeError(
             f"Embedding encode() failed for {len(cleaned_texts)} texts: {exc}"

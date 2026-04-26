@@ -22,6 +22,7 @@ def chunk_pages(
     source_name: str,
     chunk_size: int = CHUNK_SIZE,
     chunk_overlap: int = CHUNK_OVERLAP,
+    max_chunks: int | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Convert a list of extracted pages into overlapping text chunks.
@@ -74,8 +75,9 @@ def chunk_pages(
                 }
             )
             chunk_id += 1
+            if max_chunks is not None and len(all_chunks) >= max_chunks:
+                return all_chunks
 
-    print("CHUNKS CREATED:", len(all_chunks))
     return all_chunks
 
 
