@@ -12,6 +12,25 @@
   <img src="https://img.shields.io/badge/Frontend-Streamlit-red?style=for-the-badge" />
 </p>
 
+<p align="center">
+  <a href="https://docu-mind-intelligence.streamlit.app/">
+    <img src="https://img.shields.io/badge/Live%20Demo-Streamlit-success?style=for-the-badge" />
+  </a>
+  
+  <a href="https://documind-ai-dfui.onrender.com">
+    <img src="https://img.shields.io/badge/Backend-Render-purple?style=for-the-badge" />
+  </a>
+</p>
+
+---
+
+## Live Deployment
+
+| Service | Link |
+|---|---|
+| Frontend | https://docu-mind-intelligence.streamlit.app/ |
+| Backend API | https://documind-ai-dfui.onrender.com |
+
 ---
 
 ## Overview
