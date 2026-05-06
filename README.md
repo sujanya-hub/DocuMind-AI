@@ -1,7 +1,8 @@
-DocIQ | Enterprise Document Intelligence & Retrieval Platform
+# DocuMind AI
+### Production-Ready RAG System for Enterprise PDF Intelligence
 
 <p align="center">
-  <b>Transforming Unstructured Documents into Actionable Intelligence</b>
+  Retrieval-grounded question answering and analysis for complex PDF documents.
 </p>
 
 <p align="center">
@@ -15,126 +16,186 @@ DocIQ | Enterprise Document Intelligence & Retrieval Platform
 
 ## Overview
 
-DocIQ is a production-grade AI platform designed to convert unstructured documents into structured, queryable intelligence.
+DocuMind AI is a Retrieval-Augmented Generation (RAG) system built for querying and analyzing long-form PDFs using semantic retrieval and citation-backed response generation.
 
-It is built using a Retrieval-Augmented Generation (RAG) architecture to ensure:
-- factual accuracy through retrieval grounding  
-- low-latency semantic search  
-- explainable outputs with source traceability  
-- modular and scalable system design  
+The project focuses on reducing hallucinations in document-based question answering by retrieving relevant local context before response generation.
 
-The platform enables deep analysis of research papers, reports, and technical PDFs while maintaining performance and reliability standards expected in real-world AI systems.
-
----
-
-## Problem Statement
-
-Traditional document analysis tools face critical limitations:
-
-- Lack of contextual understanding  
-- Hallucinated responses from language models  
-- No traceability of generated outputs  
-- Poor performance on large documents  
-
-DocIQ is engineered to address these challenges through a structured and optimized AI pipeline.
+The pipeline combines:
+- PDF parsing
+- semantic chunking
+- vector search
+- retrieval-grounded prompting
+- low-latency inference using Groq Llama 3.1
 
 ---
 
-## Solution Approach
+## Preview
 
-DocIQ implements a multi-stage architecture:
+### Multi-Stage RAG Chat
 
-1. Document ingestion and parsing  
-2. Context-aware text segmentation  
-3. Semantic embedding generation  
-4. Vector-based retrieval (FAISS)  
-5. LLM-driven reasoning with grounded context  
+Context-aware retrieval with citation-backed response generation using Streamlit session state.
 
-This ensures that all outputs are derived from relevant document segments, significantly reducing hallucination and improving reliability.
+![Chat Interface](assets/chat-interface.png)
 
 ---
 
-## Key Features
+### Retrieval & Indexing Pipeline
 
-### Document Intelligence Engine
+Document ingestion, chunk generation, vector indexing, and retrieval state visualization.
 
-- Executive summarization for rapid understanding  
-- Structured extraction of key findings, risks, and conclusions  
-- Metadata and document structure recognition  
-- Analytical breakdown of complex content  
+![Dashboard](assets/executive-summary.png)
 
 ---
 
-### Context-Aware Q&A (RAG)
+### Analytical Insight Extraction
 
-- Retrieval-grounded responses  
-- Source traceability for every answer  
-- Confidence scoring based on retrieval quality  
-- Intelligent query suggestions categorized into:
-  - Understanding  
-  - Critical Analysis  
-  - Strategic Insight  
+Structured extraction of key findings, risks, and contextual summaries from indexed documents.
+
+![Insights](assets/insights-analysis.png)
+
+---
+
+## Why RAG?
+
+Standard LLMs struggle with hallucinations and context drift when working with long-form or domain-specific documents.
+
+DocuMind AI solves this by retrieving relevant document chunks before generation, giving the model localized context for every response instead of relying entirely on pretrained memory.
+
+This improves:
+- factual consistency
+- source traceability
+- retrieval relevance
+- adaptability across different document domains
+
+---
+
+## Retrieval Pipeline
+
+1. PDF ingestion and parsing using PyMuPDF  
+2. Semantic chunk generation with overlap handling  
+3. Dense vector embedding generation  
+4. FAISS-based Top-K similarity retrieval  
+5. Retrieval-grounded response generation using Groq Llama 3.1  
+
+---
+
+## Core Components
+
+### Retrieval Pipeline
+
+- FAISS-based semantic similarity search
+- Top-K contextual retrieval
+- SentenceTransformer embeddings
+- Chunk overlap strategy for context continuity
+
+### Document Processing
+
+- PDF parsing using PyMuPDF
+- Semantic text segmentation
+- Metadata-aware indexing
+- Context-preserving chunk generation
+
+### Response Generation
+
+- Retrieval-grounded prompting
+- Citation-backed responses
+- Context-aware synthesis using Groq Llama 3.1
+- Single-pass inference workflow
+
+### Session Handling
+
+- Streamlit session state management
+- Cached vector persistence
+- Stateful document interaction
+
+---
+
+## Engineering Decisions
+
+| Decision | Reasoning |
+|---|---|
+| Retrieval-Augmented Generation instead of fine-tuning | Easier domain adaptation and stronger factual grounding |
+| FAISS vector indexing | Fast similarity search with low retrieval latency |
+| Semantic chunk overlap | Helps preserve context across chunk boundaries |
+| Groq inference | Lower response latency during generation |
+| Modular pipeline design | Easier debugging and future backend migration |
+| Citation-backed responses | Makes outputs easier to verify |
 
 ---
 
 ## Architecture
 
 ```text
-User Interface (Streamlit)
-        │
-        ▼
-Agentic Orchestrator (Workflow Control)
-        │
- ┌──────┼──────────────┐
- ▼      ▼              ▼
-Parser  Embedder     LLM Engine
-        │              │
-        ▼              ▼
-        Vector Database (FAISS)
-````
-
----
-
-## Engineering Design Highlights
-
-| Component   | Design Strategy                                    |
-| ----------- | -------------------------------------------------- |
-| Inference   | Single-pass LLM execution to reduce latency        |
-| Retrieval   | Semantic similarity search with FAISS              |
-| Caching     | Session-level state management                     |
-| Execution   | Lazy evaluation for efficiency                     |
-| Reliability | Strict retrieval grounding to reduce hallucination |
+                   ┌────────────────────┐
+                   │    Streamlit UI    │
+                   └─────────┬──────────┘
+                             │
+                             ▼
+                ┌────────────────────────┐
+                │ Workflow Control Layer │
+                └───────┬───────┬────────┘
+                        │       │
+            ┌───────────┘       └────────────┐
+            ▼                                ▼
+    ┌────────────────┐              ┌────────────────┐
+    │ PDF Parser      │              │  LLM Engine    │
+    │ (PyMuPDF)       │              │ (Groq Llama)   │
+    └────────┬────────┘              └────────┬───────┘
+             │                                │
+             ▼                                │
+    ┌────────────────┐                        │
+    │ Semantic        │                        │
+    │ Chunking Engine │                        │
+    └────────┬────────┘                        │
+             ▼                                │
+    ┌────────────────┐                        │
+    │ Embedding Model │                        │
+    │ SentenceTransf. │                        │
+    └────────┬────────┘                        │
+             ▼                                ▼
+          ┌─────────────────────────────────────┐
+          │     FAISS Vector Database           │
+          └─────────────────────────────────────┘
+```
 
 ---
 
 ## Tech Stack
 
-| Layer        | Technology            |
-| ------------ | --------------------- |
-| Frontend     | Streamlit             |
-| Backend      | Python                |
-| LLM          | Groq API (Llama 3.1)  |
-| Embeddings   | Sentence Transformers |
-| Vector Store | FAISS                 |
-| Parsing      | PyMuPDF               |
+| Layer | Technology |
+|---|---|
+| Frontend | Streamlit |
+| Backend | Python |
+| LLM Inference | Groq API (Llama 3.1) |
+| Embeddings | Sentence Transformers |
+| Vector Search | FAISS |
+| PDF Parsing | PyMuPDF |
 
 ---
 
 ## Project Structure
 
 ```text
-DocIQ/
-├── .streamlit/
-│   └── secrets.toml
+DocuMind/
+│
+├── assets/
+│   ├── chat-interface.png
+│   ├── executive-summary.png
+│   └── insights-analysis.png
+│
 ├── core/
 │   ├── agentic_engine.py
 │   ├── ai_engine.py
 │   ├── chunker.py
 │   ├── embedder.py
-│   ├── vectordb.py
 │   ├── qa_engine.py
-│   └── session_manager.py
+│   ├── session_manager.py
+│   └── vectordb.py
+│
 ├── uploads/
+├── .streamlit/
+│   └── secrets.toml
+│
 ├── app.py
 ├── requirements.txt
 └── README.md
@@ -142,33 +203,100 @@ DocIQ/
 
 ---
 
-## Installation & Setup
+## Performance Notes
 
-### 1. Clone Repository
+| Metric | Observation |
+|---|---|
+| Average response latency | ~2–4 seconds |
+| Retrieval strategy | Top-K semantic retrieval |
+| Large document handling | Chunked vector indexing |
+| Inference flow | Single-pass generation |
+
+Performance varies depending on:
+- document size
+- chunk count
+- embedding generation time
+- local hardware resources
+
+---
+
+## Current Constraints
+
+- Large PDFs (>100 pages) can increase indexing latency on CPU-only environments.
+- Complex nested tables may lose formatting during extraction.
+- Retrieval quality depends heavily on chunking strategy and embedding quality.
+- OCR support for scanned PDFs is not yet implemented.
+- Session memory is currently limited to active runtime state.
+
+---
+
+## Planned Improvements
+
+- Multi-document retrieval
+- Conversational memory
+- OCR pipeline for scanned documents
+- GraphRAG experimentation
+- FastAPI backend migration
+- API-based deployment architecture
+- Multi-user session support
+
+---
+
+## Installation
+
+### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/dociq.git
-cd dociq
+git clone https://github.com/your-username/documind-ai.git
+cd documind-ai
 ```
 
-### 2. Create Virtual Environment
+---
+
+### 2. Create a Virtual Environment
+
+#### Windows
 
 ```bash
 python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+venv\Scripts\activate
+```
+
+#### macOS/Linux
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+---
+
+### 3. Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment
+---
 
-Create `.streamlit/secrets.toml`:
+### 4. Configure API Keys
+
+Create:
+
+```bash
+.streamlit/secrets.toml
+```
+
+Add:
 
 ```toml
 GROQ_API_KEY = "your_api_key_here"
 GROQ_MODEL_NAME = "llama-3.1-8b-instant"
 ```
 
-### 4. Run Application
+---
+
+### 5. Run the Application
 
 ```bash
 streamlit run app.py
@@ -176,31 +304,35 @@ streamlit run app.py
 
 ---
 
-## Performance
+## Example Use Cases
 
-* Average response latency: 2–4 seconds
-* Optimized for real-time interaction
-* Efficient handling of large documents through chunking and indexing
+### Research Paper Analysis
+Ask contextual questions over long-form academic papers.
 
----
+### Enterprise Knowledge Retrieval
+Search internal documentation using semantic retrieval.
 
-## Roadmap
+### Technical Documentation QA
+Retrieve implementation details from engineering documents.
 
-* Multi-document analysis and comparison
-* Conversational memory for session continuity
-* Document highlighting and annotation
-* FastAPI backend for scalable deployment
-* Enterprise API integration
+### Risk & Insight Extraction
+Generate structured summaries and risk observations from reports.
 
 ---
 
-## Author
+## Developer
 
-Sujanya Srinivas
-AI/ML Engineer | Data Scientist
+### Sujanya Srinivas
 
-Specializing in:
+AI/ML Engineer focused on:
+- Retrieval-Augmented Generation (RAG)
+- NLP Systems
+- Semantic Search
+- Applied Generative AI
+- Scalable AI Workflows
 
-* Retrieval-Augmented Generation (RAG)
-* Generative AI Systems
-* Scalable AI Architectures
+---
+
+## License
+
+This project is intended for educational, research, and portfolio use.
