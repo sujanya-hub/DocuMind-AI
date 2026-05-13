@@ -1,321 +1,126 @@
-# DocuMind AI
-### Production-Ready RAG System for Enterprise PDF Intelligence
+<div align="center">
 
-<p align="center">
-  Retrieval-grounded question answering and analysis for complex PDF documents.
-</p>
+<img src="https://img.shields.io/badge/STATUS-LIVE-00ff88?style=for-the-badge&labelColor=0d0d0d" />
+<img src="https://img.shields.io/badge/STREAMLIT-CLOUD-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white&labelColor=0d0d0d" />
+<img src="https://img.shields.io/badge/RENDER-BACKEND-46E3B7?style=for-the-badge&logo=render&logoColor=white&labelColor=0d0d0d" />
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Architecture-RAG-blue?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/LLM-Groq%20%7C%20Llama3.1-black?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/VectorDB-FAISS-orange?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Frontend-Streamlit-red?style=for-the-badge" />
-</p>
+<br /><br />
 
-<p align="center">
-  <a href="https://docu-mind-intelligence.streamlit.app/">
-    <img src="https://img.shields.io/badge/Live%20Demo-Streamlit-success?style=for-the-badge" />
-  </a>
-  
-  <a href="https://documind-ai-dfui.onrender.com">
-    <img src="https://img.shields.io/badge/Backend-Render-purple?style=for-the-badge" />
-  </a>
-</p>
+```
+██████╗  ██████╗  ██████╗██╗   ██╗███╗   ███╗██╗███╗   ██╗██████╗     █████╗ ██╗
+██╔══██╗██╔═══██╗██╔════╝██║   ██║████╗ ████║██║████╗  ██║██╔══██╗   ██╔══██╗██║
+██║  ██║██║   ██║██║     ██║   ██║██╔████╔██║██║██╔██╗ ██║██║  ██║   ███████║██║
+██║  ██║██║   ██║██║     ██║   ██║██║╚██╔╝██║██║██║╚██╗██║██║  ██║   ██╔══██║██║
+██████╔╝╚██████╔╝╚██████╗╚██████╔╝██║ ╚═╝ ██║██║██║ ╚████║██████╔╝██╗██║  ██║██║
+╚═════╝  ╚═════╝  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝
+```
 
----
+### **AI-Powered Document Intelligence & Analysis System**
+*Query any PDF in plain English. Get cited, source-grounded answers in milliseconds.*
 
-## Live Deployment
+<br />
 
-| Service | Link |
-|---|---|
-| Frontend | https://docu-mind-intelligence.streamlit.app/ |
-| Backend API | https://documind-ai-dfui.onrender.com |
+[![Live App](https://img.shields.io/badge/%20Live%20App-docu--mind--intelligence.streamlit.app-FF4B4B?style=for-the-badge)](https://docu-mind-intelligence.streamlit.app)
+[![Backend API](https://img.shields.io/badge/%20Backend%20API-documind--ai--dfui.onrender.com-46E3B7?style=for-the-badge)](https://documind-ai-dfui.onrender.com)
+
+</div>
 
 ---
 
-## Overview
+## What Is DocuMind?
 
-DocuMind AI is a Retrieval-Augmented Generation (RAG) system built for querying and analyzing long-form PDFs using semantic retrieval and citation-backed response generation.
+DocuMind is a **production-deployed RAG (Retrieval-Augmented Generation) system** that lets users interrogate large PDFs using natural language — and receive precise, source-cited answers grounded in actual document content, not hallucinations.
 
-The project focuses on reducing hallucinations in document-based question answering by retrieving relevant local context before response generation.
-
-The pipeline combines:
-- PDF parsing
-- semantic chunking
-- vector search
-- retrieval-grounded prompting
-- low-latency inference using Groq Llama 3.1
+Upload a 50+ page research paper, legal document, or financial report and ask it anything. DocuMind retrieves the right chunks, constructs a grounded prompt, and returns a cited answer in under a second.
 
 ---
 
-## Preview
+## Performance Benchmarks
 
-### Multi-Stage RAG Chat
-
-Context-aware retrieval with citation-backed response generation using Streamlit session state.
-
-![Chat Interface](assets/chat-interface.png)
-
----
-
-### Retrieval & Indexing Pipeline
-
-Document ingestion, chunk generation, vector indexing, and retrieval state visualization.
-
-![Dashboard](assets/executive-summary.png)
+| Operation | Latency |
+|-----------|---------|
+| PDF Ingestion + Chunking | < 2s per doc |
+| Semantic Embedding (384-dim) | Batch processed |
+| FAISS Top-4 Vector Retrieval | **~47 ms** |
+| Full LLM Response (Groq Llama 3.1) | **~655 ms** |
+| Chunks per 15-page document | **100 chunks** |
 
 ---
 
-### Analytical Insight Extraction
+## System Architecture
 
-Structured extraction of key findings, risks, and contextual summaries from indexed documents.
-
-![Insights](assets/insights-analysis.png)
-
----
-
-## Why RAG?
-
-Standard LLMs struggle with hallucinations and context drift when working with long-form or domain-specific documents.
-
-DocuMind AI solves this by retrieving relevant document chunks before generation, giving the model localized context for every response instead of relying entirely on pretrained memory.
-
-This improves:
-- factual consistency
-- source traceability
-- retrieval relevance
-- adaptability across different document domains
-
----
-
-## Retrieval Pipeline
-
-1. PDF ingestion and parsing using PyMuPDF  
-2. Semantic chunk generation with overlap handling  
-3. Dense vector embedding generation  
-4. FAISS-based Top-K similarity retrieval  
-5. Retrieval-grounded response generation using Groq Llama 3.1  
-
----
-
-## Core Components
-
-### Retrieval Pipeline
-
-- FAISS-based semantic similarity search
-- Top-K contextual retrieval
-- SentenceTransformer embeddings
-- Chunk overlap strategy for context continuity
-
-### Document Processing
-
-- PDF parsing using PyMuPDF
-- Semantic text segmentation
-- Metadata-aware indexing
-- Context-preserving chunk generation
-
-### Response Generation
-
-- Retrieval-grounded prompting
-- Citation-backed responses
-- Context-aware synthesis using Groq Llama 3.1
-- Single-pass inference workflow
-
-### Session Handling
-
-- Streamlit session state management
-- Cached vector persistence
-- Stateful document interaction
-
----
-
-## Engineering Decisions
-
-| Decision | Reasoning |
-|---|---|
-| Retrieval-Augmented Generation instead of fine-tuning | Easier domain adaptation and stronger factual grounding |
-| FAISS vector indexing | Fast similarity search with low retrieval latency |
-| Semantic chunk overlap | Helps preserve context across chunk boundaries |
-| Groq inference | Lower response latency during generation |
-| Modular pipeline design | Easier debugging and future backend migration |
-| Citation-backed responses | Makes outputs easier to verify |
-
----
-
-## Architecture
-
-```text
-                   ┌────────────────────┐
-                   │    Streamlit UI    │
-                   └─────────┬──────────┘
-                             │
-                             ▼
-                ┌────────────────────────┐
-                │ Workflow Control Layer │
-                └───────┬───────┬────────┘
-                        │       │
-            ┌───────────┘       └────────────┐
-            ▼                                ▼
-    ┌────────────────┐              ┌────────────────┐
-    │ PDF Parser      │              │  LLM Engine    │
-    │ (PyMuPDF)       │              │ (Groq Llama)   │
-    └────────┬────────┘              └────────┬───────┘
-             │                                │
-             ▼                                │
-    ┌────────────────┐                        │
-    │ Semantic        │                        │
-    │ Chunking Engine │                        │
-    └────────┬────────┘                        │
-             ▼                                │
-    ┌────────────────┐                        │
-    │ Embedding Model │                        │
-    │ SentenceTransf. │                        │
-    └────────┬────────┘                        │
-             ▼                                ▼
-          ┌─────────────────────────────────────┐
-          │     FAISS Vector Database           │
-          └─────────────────────────────────────┘
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        USER INTERFACE                           │
+│                    Streamlit Cloud Frontend                     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      INGESTION LAYER                            │
+│   PDF Upload → PyMuPDF Parsing → Semantic Text Chunking        │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     EMBEDDING LAYER                             │
+│   Sentence Transformers → 384-dim Dense Vectors → FAISS Index  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     RETRIEVAL LAYER                             │
+│   Query Embedding → FAISS Similarity Search → Top-4 Chunks     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    GENERATION LAYER                             │
+│   Custom Prompt Template → Groq API (Llama 3.1 8B) → Answer   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 | Layer | Technology |
-|---|---|
-| Frontend | Streamlit |
-| Backend | Python |
-| LLM Inference | Groq API (Llama 3.1) |
-| Embeddings | Sentence Transformers |
-| Vector Search | FAISS |
-| PDF Parsing | PyMuPDF |
+|-------|-----------|
+| **LLM Backend** | Groq API — Llama 3.1 8B |
+| **Embeddings** | Sentence Transformers (384-dim) |
+| **Vector Store** | FAISS |
+| **Orchestration** | LangChain |
+| **PDF Parsing** | PyMuPDF |
+| **Frontend** | Streamlit |
+| **Backend** | Render |
+| **Language** | Python |
 
 ---
 
-## Project Structure
+## Core Features
 
-```text
-DocuMind/
-│
-├── assets/
-│   ├── chat-interface.png
-│   ├── executive-summary.png
-│   └── insights-analysis.png
-│
-├── core/
-│   ├── agentic_engine.py
-│   ├── ai_engine.py
-│   ├── chunker.py
-│   ├── embedder.py
-│   ├── qa_engine.py
-│   ├── session_manager.py
-│   └── vectordb.py
-│
-├── uploads/
-├── .streamlit/
-│   └── secrets.toml
-│
-├── app.py
-├── requirements.txt
-└── README.md
-```
+- **50+ page PDF support** — handles large documents without truncation
+- **Semantic chunking** — context-aware splitting, not naive character splits
+- **FAISS vector indexing** — millisecond nearest-neighbor retrieval
+- **Custom Groq prompts** — engineered templates that reduce hallucinations
+- **Session-state conversation history** — multi-turn Q&A within a session
+- **Source-cited answers** — every response grounded in retrieved document chunks
+- **Dual deployment** — Streamlit Cloud (UI) + Render (backend API)
 
 ---
 
-## Performance Notes
-
-| Metric | Observation |
-|---|---|
-| Average response latency | ~2–4 seconds |
-| Retrieval strategy | Top-K semantic retrieval |
-| Large document handling | Chunked vector indexing |
-| Inference flow | Single-pass generation |
-
-Performance varies depending on:
-- document size
-- chunk count
-- embedding generation time
-- local hardware resources
-
----
-
-## Current Constraints
-
-- Large PDFs (>100 pages) can increase indexing latency on CPU-only environments.
-- Complex nested tables may lose formatting during extraction.
-- Retrieval quality depends heavily on chunking strategy and embedding quality.
-- OCR support for scanned PDFs is not yet implemented.
-- Session memory is currently limited to active runtime state.
-
----
-
-## Planned Improvements
-
-- Multi-document retrieval
-- Conversational memory
-- OCR pipeline for scanned documents
-- GraphRAG experimentation
-- FastAPI backend migration
-- API-based deployment architecture
-- Multi-user session support
-
----
-
-## Installation
-
-### 1. Clone the Repository
+## Run Locally
 
 ```bash
-git clone https://github.com/your-username/documind-ai.git
-cd documind-ai
-```
-
----
-
-### 2. Create a Virtual Environment
-
-#### Windows
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-#### macOS/Linux
-
-```bash
-python -m venv venv
-source venv/bin/activate
-```
-
----
-
-### 3. Install Dependencies
-
-```bash
+git clone https://github.com/sujanya-hub/DocuMind-AI-Powered-Document-Intelligence-Analysis-System
+cd DocuMind-AI-Powered-Document-Intelligence-Analysis-System
 pip install -r requirements.txt
 ```
 
----
-
-### 4. Configure API Keys
-
-Create:
-
-```bash
-.streamlit/secrets.toml
+Add your API keys to `.env`:
+```env
+GROQ_API_KEY=your_groq_api_key
 ```
-
-Add:
-
-```toml
-GROQ_API_KEY = "your_api_key_here"
-GROQ_MODEL_NAME = "llama-3.1-8b-instant"
-```
-
----
-
-### 5. Run the Application
 
 ```bash
 streamlit run app.py
@@ -323,35 +128,36 @@ streamlit run app.py
 
 ---
 
-## Example Use Cases
+## Project Structure
 
-### Research Paper Analysis
-Ask contextual questions over long-form academic papers.
-
-### Enterprise Knowledge Retrieval
-Search internal documentation using semantic retrieval.
-
-### Technical Documentation QA
-Retrieve implementation details from engineering documents.
-
-### Risk & Insight Extraction
-Generate structured summaries and risk observations from reports.
-
----
-
-## Developer
-
-### Sujanya Srinivas
-
-AI/ML Engineer focused on:
-- Retrieval-Augmented Generation (RAG)
-- NLP Systems
-- Semantic Search
-- Applied Generative AI
-- Scalable AI Workflows
+```
+DocuMind/
+├── app.py                  # Streamlit frontend
+├── backend/
+│   ├── ingestion.py        # PDF parsing & chunking (PyMuPDF)
+│   ├── embeddings.py       # Sentence Transformer embedding
+│   ├── retrieval.py        # FAISS indexing & search
+│   └── generation.py       # Groq prompt templates & LLM calls
+├── requirements.txt
+└── .env.example
+```
 
 ---
 
-## License
+## Live Deployments
 
-This project is intended for educational, research, and portfolio use.
+| Service | URL |
+|---------|-----|
+| **Streamlit App** | [docu-mind-intelligence.streamlit.app](https://docu-mind-intelligence.streamlit.app) |
+| **Render Backend** | [documind-ai-dfui.onrender.com](https://documind-ai-dfui.onrender.com) |
+
+> *Render free-tier has a cold-start delay of ~7s on first request. Subsequent requests are fast.*
+
+---
+
+<div align="center">
+
+**Built by [Sujanya Srinivas](https://linkedin.com/in/sujanya-s-538a7a2b1)**
+[LinkedIn](https://linkedin.com/in/sujanya-s-538a7a2b1) · [GitHub](https://github.com/sujanya-hub) · [Email](mailto:sujanyasrinivasa@gmail.com)
+
+</div>
