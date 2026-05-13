@@ -7,12 +7,12 @@
 <br /><br />
 
 ```
-██████╗  ██████╗  ██████╗██╗   ██╗███╗   ███╗██╗███╗   ██╗██████╗     █████╗ ██╗
-██╔══██╗██╔═══██╗██╔════╝██║   ██║████╗ ████║██║████╗  ██║██╔══██╗   ██╔══██╗██║
-██║  ██║██║   ██║██║     ██║   ██║██╔████╔██║██║██╔██╗ ██║██║  ██║   ███████║██║
-██║  ██║██║   ██║██║     ██║   ██║██║╚██╔╝██║██║██║╚██╗██║██║  ██║   ██╔══██║██║
-██████╔╝╚██████╔╝╚██████╗╚██████╔╝██║ ╚═╝ ██║██║██║ ╚████║██████╔╝██╗██║  ██║██║
-╚═════╝  ╚═════╝  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝
+██████╗  ██████╗  ██████╗██╗   ██╗███╗   ███╗██╗███╗   ██╗██████╗ 
+██╔══██╗██╔═══██╗██╔════╝██║   ██║████╗ ████║██║████╗  ██║██╔══██╗
+██║  ██║██║   ██║██║     ██║   ██║██╔████╔██║██║██╔██╗ ██║██║  ██║
+██║  ██║██║   ██║██║     ██║   ██║██║╚██╔╝██║██║██║╚██╗██║██║  ██║
+██████╔╝╚██████╔╝╚██████╗╚██████╔╝██║ ╚═╝ ██║██║██║ ╚████║██████╔╝
+╚═════╝  ╚═════╝  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝ 
 ```
 
 ### **AI-Powered Document Intelligence & Analysis System**
@@ -82,8 +82,7 @@ Upload a 50+ page research paper, legal document, or financial report and ask it
 
 ---
 
-## 
-Tech Stack
+## 🛠️ Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
@@ -133,14 +132,13 @@ streamlit run app.py
 
 ```
 DocuMind/
-├── app.py                  # Streamlit frontend
-├── backend/
-│   ├── ingestion.py        # PDF parsing & chunking (PyMuPDF)
-│   ├── embeddings.py       # Sentence Transformer embedding
-│   ├── retrieval.py        # FAISS indexing & search
-│   └── generation.py       # Groq prompt templates & LLM calls
+├── assets/
+├── core/
+├── utils/
+├── .gitignore
+├── app.py
 ├── requirements.txt
-└── .env.example
+└── runtime.txt
 ```
 
 ---
