@@ -82,7 +82,7 @@ Upload a 50+ page research paper, legal document, or financial report and ask it
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
