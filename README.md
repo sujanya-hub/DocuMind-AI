@@ -35,6 +35,25 @@ Upload a 50+ page research paper, legal document, or financial report and ask it
 
 ---
 
+## Screenshots
+
+### Executive Summary Dashboard
+
+![Executive Summary](assets/executive-summary.png)
+
+---
+
+### RAG Question Answering Interface
+
+![RAG Chat](assets/rag-chat.png)
+
+---
+
+### Upload & Indexing Pipeline
+
+![Upload Interface](assets/upload-panel.png)
+
+
 ## Performance Benchmarks
 
 | Operation | Latency |
