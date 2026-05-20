@@ -1,16 +1,3 @@
-"""
-embedder.py - Memory-efficient sentence embeddings for DocuMind.
-
-The model is imported and loaded lazily so Streamlit startup stays light on
-Render. Embeddings are returned as normalised float32 arrays for efficient
-FAISS cosine-similarity search.
-
-Memory budget (Render free tier, 512 MB):
-  - paraphrase-MiniLM-L3-v2 at rest : ~12 MB RAM  (vs ~22 MB for L6)
-  - batch_size=2                     : ~20 MB peak activation per encode() call
-  - device="cpu"                     : avoids CUDA allocator overhead (~100 MB)
-"""
-
 from __future__ import annotations
 
 from typing import List
@@ -19,9 +6,6 @@ import numpy as np
 
 from core.config import EMBEDDING_DIM
 
-# Batch size of 2 keeps peak activation memory below 25 MB on Render free tier.
-# Do not raise this without profiling — the free tier OOMs silently above ~40 MB
-# peak per encode() call when combined with FAISS index memory.
 _SAFE_BATCH_SIZE = 2
 
 _model = None
@@ -39,12 +23,7 @@ def get_model():
             ) from exc
 
         print("EMBEDDER MODEL LOADING")
-        # paraphrase-MiniLM-L3-v2: 3-layer model, ~12 MB at rest.
-        # Chosen over all-MiniLM-L6-v2 (~22 MB) specifically to stay within
-        # the 512 MB Render free tier limit. Retrieval quality is marginally
-        # lower but acceptable for document Q&A workloads.
-        # device="cpu" is pinned — never reads from config so a misconfigured
-        # EMBEDDING_MODEL env var cannot trigger a CUDA OOM crash.
+       
         _model = SentenceTransformer("paraphrase-MiniLM-L3-v2", device="cpu")
         print("EMBEDDER MODEL READY")
     return _model
