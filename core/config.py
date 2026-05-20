@@ -1,11 +1,3 @@
-"""
-Production-safe runtime settings for DocuMind.
-
-Resolves configuration exclusively from environment variables.
-Compatible with Render and any platform that sets env vars in the dashboard.
-No Streamlit dependency. No import-time crashes.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -17,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 try:
     import streamlit as st
-except Exception:  # pragma: no cover - safe fallback outside Streamlit runtime
+except Exception:
     st = None
 
 
