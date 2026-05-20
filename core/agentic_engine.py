@@ -1,16 +1,3 @@
-"""
-core/agentic_engine.py - Multi-Step Agentic Reasoning Engine
-
-Enterprise-grade agentic pipeline: Retrieval → Extractor → Critic → Synthesis.
-Operates on top of a VectorDB (FAISS) and AIEngine (Groq LLM wrapper).
-
-v2 upgrades:
-  - run(query, top_k, mode) signature — top_k flows from app.py speed selector
-  - mode="red_team" activates adversarial critique prompt
-  - Chunk deduplication and noise filtering before context assembly
-  - LLM calls use explicit system_prompt + user_prompt (not a single merged str)
-"""
-
 from __future__ import annotations
 
 import logging
@@ -25,8 +12,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_TOP_K     = 6
-_MIN_CHUNK_LENGTH  = 30       # characters; shorter chunks are noise-filtered
-_MAX_CONTEXT_CHARS = 12_000   # hard cap on context fed to any single prompt
+_MIN_CHUNK_LENGTH  = 30      
+_MAX_CONTEXT_CHARS = 12_000  
 
 _FALLBACK_ANSWER = (
     "The document does not contain sufficient information to answer this question "
@@ -147,11 +134,11 @@ def _call_llm(ai_engine: Any, system_prompt: str, user_prompt: str, step_name: s
     Returns empty string on failure.
     """
     try:
-        # Prefer two-argument signature (system + user)
+
         try:
             response = ai_engine.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         except TypeError:
-            # Fallback: merge into single prompt string
+     
             merged   = f"{system_prompt}\n\n{user_prompt}"
             response = ai_engine.complete(merged)
 
