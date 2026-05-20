@@ -1,27 +1,3 @@
-"""
-summarizer.py - Document summarization via Groq.
-
-Produces three complementary summary types from document text:
-    1. short_summary    - executive-level overview (~100 words)
-    2. detailed_summary - comprehensive analytical summary (~300 words)
-    3. bullet_summary   - 5–8 grounded, specific bullet points
-
-Short documents are processed in a single LLM call per summary type.
-Documents that exceed the character limit are processed using a
-map-reduce strategy: windows are summarized independently, then
-condensed into each final output type.
-
-All LLM calls are routed through core.ai_engine.generate_response.
-
-Public interface:
-    summarizer.full_summary(pages)        → str   (backward-compatible)
-    summarizer.summarize(pages)           → dict  {"short", "detailed", "bullets"}
-    summarizer.chunk_summary(text)        → str   (backward-compatible)
-    summarizer.short_summary(pages)       → str
-    summarizer.detailed_summary(pages)    → str
-    summarizer.bullet_summary(pages)      → list[str]
-"""
-
 from __future__ import annotations
 
 import logging
@@ -136,8 +112,6 @@ class Summarizer:
     """
 
     def __init__(self) -> None:
-        # Keep construction side-effect free so document ingestion can finish
-        # even before deployment secrets are configured.
         pass
 
     # -------------------------------------------------------------------------
