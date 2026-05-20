@@ -1,25 +1,3 @@
-"""
-insight_engine.py - Structured document insight generation for DocuMind Analyst.
-
-Produces four categories of analytical output from document text:
-    1. Key insights   - material findings with confidence scores, filtered and ranked
-    2. Suggested questions - segmented by stakeholder role
-    3. Actionable takeaways - segmented by audience with next steps
-    4. Enhanced explanation - substantive analytical narrative
-
-All LLM calls are routed through core.ai_engine.generate_response.
-Output is returned as typed dataclasses. Parsing uses section-delimited
-regex anchoring which is tolerant of minor LLM formatting variation
-without being fragile.
-
-Enterprise enhancements (v2):
-  - Per-insight confidence scoring via a dedicated scoring pass
-  - Generic / weak insight filtering with configurable thresholds
-  - Importance-ranked insight list (descending confidence)
-  - Guaranteed 5–8 insight window via regeneration and fallback padding
-  - InsightItem dataclass replaces bare strings in key_insights
-"""
-
 from __future__ import annotations
 
 import logging
@@ -38,12 +16,10 @@ logger = logging.getLogger(__name__)
 
 _MIN_INSIGHTS        = 5
 _MAX_INSIGHTS        = 8
-_MIN_CONFIDENCE      = 0.45   # insights below this are dropped as too weak
-_MIN_INSIGHT_WORDS   = 8      # fewer words → almost certainly generic noise
-_MAX_REGEN_ATTEMPTS  = 2      # extra LLM calls allowed to reach _MIN_INSIGHTS
+_MIN_CONFIDENCE      = 0.45  
+_MIN_INSIGHT_WORDS   = 8     
+_MAX_REGEN_ATTEMPTS  = 2    
 
-# Phrases that reliably signal a generic, non-grounded insight.
-# Matched case-insensitively against the full insight text.
 _GENERIC_PHRASES: Tuple[str, ...] = (
     "the document provides",
     "the document discusses",
