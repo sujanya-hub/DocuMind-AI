@@ -1,28 +1,3 @@
-"""
-session_manager.py - Streamlit session state management for DocuMind.
-
-FINAL MEMORY FIX SUMMARY:
-  The previous version stored the entire pipeline result dict in
-  st.session_state[K.PIPELINE]. This dict contained:
-    - vector_db   (FAISS index object)
-    - qa_engine   (holds reference to vector_db)
-    - summarizer  (LLM wrapper)
-    - pages       (full extracted text of every page)
-    - chunks      (list of dicts with full text)
-
-  Streamlit serializes session state on every rerun. Storing all of this
-  caused a full duplication of peak-memory objects at the worst possible
-  moment (right after the pipeline completes at its own memory peak).
-
-  FIX:
-    - K.PIPELINE now stores a LIGHTWEIGHT dict (metadata + first 20 chunks)
-    - Heavy objects (vector_db, qa_engine, summarizer) are stored as their
-      own top-level session keys so Streamlit can reference them without
-      duplicating the FAISS index through the pipeline dict path.
-    - Pages are stored separately. They are plain text dicts — cheaper than
-      the FAISS index — but we avoid double-storing them inside pipeline too.
-"""
-
 from __future__ import annotations
 
 import os
@@ -32,14 +7,12 @@ import streamlit as st
 
 from core.insight_engine import ActionableTakeaways, InsightResult, SuggestedQuestions
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 CHAT_HISTORY_LIMIT: int = 10
-_PIPELINE_CHUNK_PREVIEW = 20   # max chunks kept in the lightweight pipeline dict
-
+_PIPELINE_CHUNK_PREVIEW = 20  
 
 # ---------------------------------------------------------------------------
 # Key registry
@@ -53,7 +26,6 @@ class _Keys:
     PAGES                = "pages"
     CHUNKS               = "chunks"
     ANALYSIS_CHUNKS      = "analysis_chunks"
-    # EMBEDDINGS intentionally absent — numpy arrays must never live here
     VECTOR_DB            = "vector_db"
     QA_ENGINE            = "qa_engine"
     SUMMARIZER           = "summarizer"
@@ -67,11 +39,9 @@ class _Keys:
     SUGGESTED_QUESTIONS  = "suggested_questions"
     ACTION_ITEMS         = "action_items"
     ENHANCED_EXPLANATION = "enhanced_explanation"
-    PIPELINE             = "pipeline"   # lightweight dict only — see store_pipeline_result
-
+    PIPELINE             = "pipeline" 
 
 K = _Keys
-
 
 # ---------------------------------------------------------------------------
 # Safe defaults factory
@@ -198,15 +168,6 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
     st.session_state[K.PROCESSING_TIME] = result.get("processing_time", 0.0)
     st.session_state[K.TOTAL_CHUNKS]    = result.get("total_chunks", len(chunks))
     st.session_state[K.INDEXED]         = True
-
-    # ── Lightweight pipeline dict ─────────────────────────────────────────
-    # app.py reads: pipeline["metadata"], pipeline["chunks"],
-    # pipeline["file_size"], pipeline["total_chunks"], pipeline["pages"],
-    # pipeline["processing_time"], pipeline["vector_db"], pipeline["qa_engine"]
-    #
-    # Heavy fields use the SAME object references as the keys above —
-    # no copy, no extra allocation. Only 20 chunks stored here for the
-    # analysis context builder; full list remains at K.CHUNKS.
     st.session_state[K.PIPELINE] = {
         "metadata":        result["metadata"],
         "file_size":       result["file_size"],
@@ -216,7 +177,6 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
         "qa_engine":       result["qa_engine"],
     }
 
-    # Clear derived/stale state from any previous document
     for key in (
         K.SUMMARY, K.LAST_ANSWER,
         K.INSIGHTS, K.SUGGESTED_QUESTIONS,
