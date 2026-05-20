@@ -1,11 +1,3 @@
-"""
-core/qa_engine.py - Retrieval-Augmented Generation Q&A engine.
-
-Retrieves the top-k most relevant chunks from VectorDB and passes them
-as grounded context to the LLM via the centralised ai_engine connector.
-No Groq client is constructed here.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -23,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_MIN_CHUNK_CHARS = 30    # chunks shorter than this are treated as noise
+_MIN_CHUNK_CHARS = 30   
 _MAX_CONTEXT_CHARS = 6000
 
 _SYSTEM_PROMPT = """\
