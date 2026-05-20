@@ -1,11 +1,3 @@
-"""
-chunker.py - Sliding-window text chunker with page-level metadata.
-
-Splits extracted PDF pages into overlapping character-level chunks.
-Every chunk carries source file name and page number so citation links
-survive through retrieval to the UI layer.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
