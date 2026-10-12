@@ -5,3 +5,5 @@ __pycache__/
 .streamlit/secrets.toml
 uploads/
 data/metrics_log.json
+
+metrics_log.json
