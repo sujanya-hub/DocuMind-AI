@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict
 
 from core.chunker import chunk_pages
-from core.config import UPLOAD_DIR
+from core.config import MAX_CHUNKS, MAX_PAGES, UPLOAD_DIR
 from core.pdf_reader import extract_pages, get_document_metadata
 from core.qa_engine import QAEngine
 from core.vectordb import VectorDB
@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 _MIN_PAGE_TEXT_LENGTH = 10
 _MIN_CHUNK_COUNT = 1
-MAX_CHUNKS = 100
-MAX_PAGES = 20
 
 
 def _sanitise_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -121,6 +119,12 @@ def run_pipeline(
     if not chunks:
         raise ValueError("No text extracted from PDF (possibly scanned PDF)")
 
+    if len(chunks) > MAX_CHUNKS:
+        logger.warning(
+            "Document produced %d chunks; keeping the first %d. Raise MAX_CHUNKS to index more.",
+            len(chunks),
+            MAX_CHUNKS,
+        )
     total_chunks = min(len(chunks), MAX_CHUNKS)
     chunks = chunks[:total_chunks]
 
@@ -156,4 +160,5 @@ def run_pipeline(
         "qa_engine": qa_engine,
         "processing_time": processing_time,
         "total_chunks": total_chunks,
+        "indexed_pages": len(pages),
     }

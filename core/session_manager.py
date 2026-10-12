@@ -12,7 +12,6 @@ from core.insight_engine import ActionableTakeaways, InsightResult, SuggestedQue
 # ---------------------------------------------------------------------------
 
 CHAT_HISTORY_LIMIT: int = 10
-_PIPELINE_CHUNK_PREVIEW = 20  
 
 # ---------------------------------------------------------------------------
 # Key registry
@@ -39,7 +38,7 @@ class _Keys:
     SUGGESTED_QUESTIONS  = "suggested_questions"
     ACTION_ITEMS         = "action_items"
     ENHANCED_EXPLANATION = "enhanced_explanation"
-    PIPELINE             = "pipeline" 
+    PIPELINE             = "pipeline"
 
 K = _Keys
 
@@ -124,23 +123,11 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
     """
     Persist the output of document_service.run_pipeline() to session state.
 
-    MEMORY STRATEGY:
-      Heavy objects (vector_db, qa_engine, summarizer) are stored as their
-      own top-level keys. Streamlit references them in-place without
-      duplicating them.
-
-      st.session_state[K.PIPELINE] is set to a LIGHTWEIGHT dict containing
-      only what the UI rendering functions actually need to read:
-        - metadata        (small dict)
-        - file_size       (int)
-        - processing_time (float)
-        - total_chunks    (int)
-        - chunks          (first 20 only, for _build_analysis_context)
-
-      Heavy objects are included in the pipeline dict as the SAME object
-      references already stored in their own keys — no copy is made.
-      This preserves app.py call sites like pipeline["qa_engine"].answer()
-      without storing a second copy of the FAISS index in memory.
+    Heavy objects (vector_db, qa_engine) are stored by reference, so no copy
+    of the index is made. `analysis_chunks` keeps a lightweight copy of EVERY
+    chunk (id, text, page, source) so the summary can sample across the whole
+    document. It was previously capped at the first 20 chunks, which is why
+    summaries only reflected the opening pages.
     """
     chunks = result.get("chunks", [])
     analysis_chunks = [
@@ -150,11 +137,10 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
             "page_number": chunk.get("page_number"),
             "source": chunk.get("source"),
         }
-        for chunk in chunks[:_PIPELINE_CHUNK_PREVIEW]
+        for chunk in chunks
         if isinstance(chunk, dict)
     ]
 
-    # ── Store heavy objects as independent top-level keys ─────────────────
     st.session_state[K.PDF_PATH]        = result["pdf_path"]
     st.session_state[K.DOCUMENT_HASH]   = result.get("document_hash", "")
     st.session_state[K.METADATA]        = result["metadata"]
@@ -173,6 +159,7 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
         "file_size":       result["file_size"],
         "processing_time": result.get("processing_time", 0.0),
         "total_chunks":    result.get("total_chunks", len(chunks)),
+        "indexed_pages":   result.get("indexed_pages", 0),
         "vector_db":       result["vector_db"],
         "qa_engine":       result["qa_engine"],
     }
@@ -183,6 +170,7 @@ def store_pipeline_result(result: Dict[str, Any]) -> None:
         K.ACTION_ITEMS, K.ENHANCED_EXPLANATION,
     ):
         st.session_state[key] = None
+
 
 def reset_document_state() -> None:
     """Clear all document-scoped and derived session keys."""

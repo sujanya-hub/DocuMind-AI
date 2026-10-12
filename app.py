@@ -11,7 +11,7 @@ from typing import Any
 import streamlit as st
 
 from core.ai_engine import generate_response
-from core.config import ANALYSIS_CONTEXT_CHARS, has_api_key
+from core.config import ANALYSIS_CONTEXT_CHARS, ANALYSIS_MAX_TOKENS, has_api_key
 from core.document_service import run_pipeline
 from core.session_manager import (
     initialise,
@@ -48,7 +48,7 @@ STATE_DEFAULTS = {
     "processed_upload_token": "",
     "is_processing": False,
     "uploader_key": 0,
-    "active_tab": "overview",
+    "_regen_force": False,
 }
 
 _ANALYSIS_PROMPT = """
@@ -65,7 +65,11 @@ A concise executive summary in 5-7 sentences.
 3 bullet points covering limitations, gaps, or caveats.
 
 [QUESTIONS]
-6 follow-up questions, one per line, each starting with a hyphen.
+6 questions a reader could ask, one per line, each starting with a hyphen.
+Each question must be answerable directly from a specific passage of the document:
+ask about results, methods, numbers, definitions or conclusions the text actually states.
+Do not ask hypotheticals, comparisons with other universities or populations, or
+questions that combine two variables unless the document reports that combination.
 """.strip()
 
 
@@ -73,10 +77,6 @@ def _init_state() -> None:
     for key, default in STATE_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = default.copy() if isinstance(default, (dict, list)) else default
-
-
-def _hydrate_pipeline_from_session() -> None:
-    return
 
 
 def _inject_styles() -> None:
@@ -427,23 +427,68 @@ def _clear_document() -> None:
     st.session_state.uploader_key += 1
 
 
+# ─── Analysis ────────────────────────────────────────────────────────────────
+
+
+def _page_sort_key(chunk: dict[str, Any]) -> int:
+    page = chunk.get("page_number")
+    return page if isinstance(page, int) else 0
+
+
 def _build_analysis_context(chunks: list[dict[str, Any]], max_chars: int = ANALYSIS_CONTEXT_CHARS) -> str:
-    selected: list[str] = []
-    total_chars = 0
-    for chunk in sorted(chunks, key=lambda item: len(item.get("text", "")), reverse=True):
+    """
+    Build the context for the summary.
+
+    Chunks are kept in page order and sampled evenly across the whole
+    document, so the summary covers the full paper instead of the first
+    few pages.
+    """
+    valid = [c for c in chunks if isinstance(c, dict)]
+    try:
+        valid = sorted(valid, key=_page_sort_key)  # stable: keeps order within a page
+    except Exception:
+        pass
+
+    entries: list[str] = []
+    seen: set[str] = set()
+    for chunk in valid:
         text = str(chunk.get("text", "")).strip()
-        page = chunk.get("page_number", "?")
         if not text:
             continue
-        entry = f"[Page {page}]\n{text}"
-        if entry in selected:
+        entry = f"[Page {chunk.get('page_number', '?')}]\n{text}"
+        if entry in seen:
             continue
-        if total_chars + len(entry) > max_chars:
+        seen.add(entry)
+        entries.append(entry)
+
+    if not entries:
+        return ""
+
+    separator_cost = 2  # the "\n\n" between entries
+    total = sum(len(e) + separator_cost for e in entries)
+    if total <= max_chars:
+        return "\n\n".join(entries)
+
+    avg_len = total / len(entries)
+    target = max(1, int(max_chars // avg_len))
+
+    if target >= len(entries):
+        picks = entries
+    elif target == 1:
+        picks = [entries[0]]
+    else:
+        last = len(entries) - 1
+        indices = sorted({round(i * last / (target - 1)) for i in range(target)})
+        picks = [entries[i] for i in indices]
+
+    selected: list[str] = []
+    used = 0
+    for entry in picks:
+        cost = len(entry) + separator_cost
+        if used + cost > max_chars:
             continue
         selected.append(entry)
-        total_chars += len(entry)
-        if total_chars >= max_chars:
-            break
+        used += cost
     return "\n\n".join(selected)
 
 
@@ -453,10 +498,16 @@ def _extract_section(text: str, tag: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+# A list marker is a dash, asterisk or bullet followed by a space, or a
+# number followed by "." or ")" and a space. A bare leading number such as
+# "13% of students..." is content and must be kept.
+_BULLET_MARKER = re.compile(r"^\s*(?:[-*\u2022]\s+|\d+[.)]\s+)")
+
+
 def _parse_bullets(raw_text: str) -> list[str]:
     bullets: list[str] = []
     for line in raw_text.splitlines():
-        cleaned = re.sub(r"^[-*\d.)\s]+", "", line).strip()
+        cleaned = _BULLET_MARKER.sub("", line).strip()
         if cleaned:
             bullets.append(cleaned)
     return bullets
@@ -466,7 +517,7 @@ def _generate_analysis(context: str) -> str:
     return generate_response(
         system_prompt=_ANALYSIS_PROMPT,
         user_prompt=f"DOCUMENT CONTEXT:\n\n{context}",
-        max_tokens=900,
+        max_tokens=ANALYSIS_MAX_TOKENS,
         temperature=0.1,
     )
 
@@ -485,8 +536,7 @@ def _ensure_analysis() -> None:
             "questions": [],
         }
         return
-    chunks = st.session_state.get("analysis_chunks", [])
-    chunks = chunks[:20]
+    chunks = st.session_state.get("analysis_chunks") or pipeline.get("chunks", [])
     context = _build_analysis_context(chunks)
     if not context.strip():
         st.session_state.analysis_cache = {
@@ -514,6 +564,9 @@ def _ensure_analysis() -> None:
         "risks": _parse_bullets(_extract_section(raw, "RISKS")),
         "questions": _parse_bullets(_extract_section(raw, "QUESTIONS")),
     }
+
+
+# ─── Question answering ──────────────────────────────────────────────────────
 
 
 def _answer_question(question: str, force_refresh: bool = False) -> dict[str, Any]:
@@ -588,7 +641,6 @@ def _process_uploaded_file(uploaded_file: Any) -> None:
         st.session_state.processing_error = ""
         st.session_state.processing_success = "Document indexed successfully!"
         st.session_state.processed_upload_token = upload_token
-        st.session_state.active_tab = "overview"
 
         st.toast("Document indexed successfully")
         st.rerun()
@@ -602,8 +654,14 @@ def _process_uploaded_file(uploaded_file: Any) -> None:
         st.session_state.is_processing = False
 
 
+# ─── Rendering helpers ───────────────────────────────────────────────────────
+
+
 def _format_answer_html(text: str) -> str:
     safe_text = html.escape((text or "No answer available.").strip())
+    # The model sometimes returns markdown bold (**Sources:**). Strip it so the
+    # "Sources:" line below can be recognised.
+    safe_text = safe_text.replace("**", "")
     safe_text = re.sub(
         r"(?im)\s*^Sources:\s*(.+)$",
         lambda m: f"<div class='sources-line'>Sources: {m.group(1)}</div>",
@@ -738,9 +796,16 @@ def _render_hero() -> None:
         if pipeline.get("vector_db") is not None
         else ' <span class="warn">The search index is missing, so questions will not work.</span>'
     )
+    total_pages = metadata.get("page_count", 0)
+    indexed_pages = pipeline.get("indexed_pages") or total_pages
+    pages_text = (
+        f"{total_pages} pages"
+        if indexed_pages >= total_pages
+        else f'{total_pages} pages (first {indexed_pages} indexed)'
+    )
     st.markdown(
         f'<h1 class="hero-title">{file_name}</h1>'
-        f'<p class="doc-meta">{metadata.get("page_count", 0)} pages, '
+        f'<p class="doc-meta">{pages_text}, '
         f'{pipeline.get("total_chunks", 0)} passages, {format_file_size(pipeline["file_size"])}. '
         f'Indexed in {pipeline.get("processing_time", 0)} seconds.{index_note}</p>',
         unsafe_allow_html=True,
@@ -792,22 +857,45 @@ def _render_overview_tab() -> None:
     )
 
 
-def _render_chat_history() -> None:
-    if not st.session_state.chat_history:
+# ─── Chat ────────────────────────────────────────────────────────────────────
+
+
+def _regenerate_last() -> None:
+    """Button callback: drop the last turn and ask the same question again."""
+    history = st.session_state.chat_history
+    if not history:
+        return
+    last = history.pop()
+    st.session_state.pending_prompt = last["question"]
+    st.session_state["_regen_force"] = True
+
+
+def _render_chat_history(show_regenerate: bool = True) -> None:
+    history = st.session_state.chat_history
+    if not history:
         return
 
-    for turn in st.session_state.chat_history:
+    for index, turn in enumerate(history):
         st.markdown(
             f'<div class="turn-q">{html.escape(turn["question"])}</div>',
             unsafe_allow_html=True,
         )
         st.markdown(_format_answer_html(turn["answer"]), unsafe_allow_html=True)
 
-        sources_count = len(turn.get("sources", []))
-        if sources_count:
-            label = f"{sources_count} source{'s' if sources_count != 1 else ''}"
+        sources = turn.get("sources", [])
+        if sources:
+            _render_confidence(sources)
+            label = f"{len(sources)} source{'s' if len(sources) != 1 else ''}"
             with st.expander(f"View {label}", expanded=False):
-                _render_sources(turn.get("sources", []))
+                _render_sources(sources)
+
+        is_last = index == len(history) - 1
+        if is_last and show_regenerate:
+            st.button(
+                "Regenerate answer",
+                key=f"regen_{turn.get('turn', index + 1)}",
+                on_click=_regenerate_last,
+            )
 
 
 def _append_chat_turn(question: str, answer: str, sources: list[dict[str, Any]]) -> None:
@@ -818,6 +906,24 @@ def _append_chat_turn(question: str, answer: str, sources: list[dict[str, Any]])
             "answer": answer,
             "sources": sources,
         }
+    )
+
+
+def _render_confidence(sources: list[dict[str, Any]]) -> None:
+    """Show how closely the retrieved passages matched the question.
+
+    This is the average similarity of the retrieved passages, not a measure of
+    whether the answer is correct, so it is labelled accordingly.
+    """
+    valid_scores = [s.get("score") for s in sources if isinstance(s.get("score"), (int, float))]
+    if not valid_scores:
+        return
+    avg_score = sum(valid_scores) / len(valid_scores)
+    pct = max(0, min(int(avg_score * 100), 100))
+    color = "#15803d" if pct >= 70 else "#b45309" if pct >= 45 else "#b91c1c"
+    st.markdown(
+        f"<div class='confidence'>Retrieval match <span style='color:{color}'>{pct}%</span></div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -840,30 +946,20 @@ def _handle_prompt(prompt: str, force_refresh: bool = False) -> None:
     stream_text(answer)
 
     if sources:
-        valid_scores = [s.get("score") for s in sources if isinstance(s.get("score"), (int, float))]
-        if valid_scores:
-            avg_score = sum(valid_scores) / len(valid_scores)
-            conf_pct = min(int(avg_score * 100), 100)
-            color = "#15803d" if conf_pct >= 70 else "#b45309" if conf_pct >= 45 else "#b91c1c"
-            st.markdown(
-                f"<div class='confidence'>Confidence <span style='color:{color}'>{conf_pct}%</span></div>",
-                unsafe_allow_html=True,
-            )
-
-    src_count = len(sources)
-    if src_count:
-        with st.expander(f"View {src_count} source{'s' if src_count != 1 else ''}", expanded=False):
+        _render_confidence(sources)
+        with st.expander(
+            f"View {len(sources)} source{'s' if len(sources) != 1 else ''}",
+            expanded=False,
+        ):
             _render_sources(sources)
 
-    regen_key = f"regen_{len(st.session_state.chat_history)}"
-    if st.button("Regenerate answer", key=regen_key):
-        if st.session_state.chat_history:
-            st.session_state.chat_history.pop()
-        st.session_state.pending_prompt = cleaned
-        st.session_state["_regen_force"] = True
-        st.rerun()
-
     _append_chat_turn(cleaned, answer, sources)
+
+    st.button(
+        "Regenerate answer",
+        key=f"regen_{len(st.session_state.chat_history)}",
+        on_click=_regenerate_last,
+    )
 
 
 def _render_suggestions_in_chat(questions: list[str]) -> None:
@@ -880,13 +976,13 @@ def _render_suggestions_in_chat(questions: list[str]) -> None:
             use_container_width=True,
         ):
             st.session_state.pending_prompt = question
-            st.session_state.active_tab = "qa"
             st.rerun()
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
 
 def _render_chat_tab() -> None:
     pipeline = st.session_state.get("pipeline")
+    ready = pipeline is not None and has_api_key()
 
     clear_col, info_col = st.columns([0.22, 0.78])
     with clear_col:
@@ -904,15 +1000,37 @@ def _render_chat_tab() -> None:
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    if pipeline is not None and has_api_key():
-        _ensure_analysis()
-        analysis = st.session_state.analysis_cache or {}
-        questions = analysis.get("questions", [])
-        if questions and not st.session_state.chat_history:
-            _render_suggestions_in_chat(questions)
+    # The conversation goes in a container created BEFORE the chat input, so
+    # questions and answers appear above the input box instead of below it.
+    conversation = st.container()
 
-    if not st.session_state.chat_history:
-        if pipeline is None:
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    prompt = st.chat_input(
+        "Ask anything about your document…",
+        disabled=not ready,
+    )
+
+    force_refresh = bool(st.session_state.get("_regen_force", False))
+    st.session_state["_regen_force"] = False
+
+    incoming_prompt = None
+    if st.session_state.pending_prompt:
+        incoming_prompt = st.session_state.pending_prompt
+        st.session_state.pending_prompt = ""
+    elif prompt:
+        incoming_prompt = prompt.strip()
+
+    with conversation:
+        if ready:
+            _ensure_analysis()
+            questions = (st.session_state.analysis_cache or {}).get("questions", [])
+            # Suggestions only on an empty chat, and not while a question is being answered.
+            if questions and not st.session_state.chat_history and not incoming_prompt:
+                _render_suggestions_in_chat(questions)
+
+        if st.session_state.chat_history:
+            _render_chat_history(show_regenerate=not incoming_prompt)
+        elif pipeline is None:
             st.markdown(
                 "<div class='empty-note'>Upload a PDF to start asking questions.</div>",
                 unsafe_allow_html=True,
@@ -923,36 +1041,14 @@ def _render_chat_tab() -> None:
                 "secrets to turn on answers.</div>",
                 unsafe_allow_html=True,
             )
-    else:
-        _render_chat_history()
 
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-    prompt = st.chat_input(
-        "Ask anything about your document…",
-        disabled=pipeline is None or not has_api_key(),
-    )
-
-    force_refresh = False
-    if st.session_state.get("_regen_force"):
-        force_refresh = True
-        st.session_state["_regen_force"] = False
-
-    incoming_prompt = None
-    if st.session_state.pending_prompt:
-        incoming_prompt = st.session_state.pending_prompt
-        st.session_state.pending_prompt = ""
-    elif prompt:
-        incoming_prompt = prompt.strip()
-
-    if incoming_prompt and pipeline is not None and has_api_key():
-        _handle_prompt(incoming_prompt, force_refresh=force_refresh)
+        if incoming_prompt and ready:
+            _handle_prompt(incoming_prompt, force_refresh=force_refresh)
 
 
 # ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 _init_state()
-_hydrate_pipeline_from_session()
 _inject_styles()
 _render_sidebar()
 
@@ -985,13 +1081,7 @@ if not has_api_key():
         "Document indexing is already active."
     )
 
-active = st.session_state.get("active_tab", "overview")
-tab_index = 1 if active == "qa" else 0
-
 overview_tab, qa_tab = st.tabs(["Summary", "Ask questions"])
-
-if tab_index == 1:
-    st.session_state.active_tab = "overview"
 
 with overview_tab:
     _render_overview_tab()

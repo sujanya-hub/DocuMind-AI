@@ -29,6 +29,10 @@ class AppConfig:
     max_tokens: int
     temperature: float
     analysis_context_chars: int
+    analysis_max_tokens: int
+    max_pages: int
+    max_chunks: int
+    reasoning_effort: str
 
 
 def _as_int(key: str, default: int) -> int:
@@ -89,25 +93,35 @@ def get_config() -> AppConfig:
     Caching keeps repeated reruns cheap while centralizing config logic.
     Never raises at import time; missing values fall back to safe defaults.
     """
-    chunk_size = max(1, _as_int("CHUNK_SIZE", 500))
-    chunk_overlap = _as_int("CHUNK_OVERLAP", 50)
+    chunk_size = max(1, _as_int("CHUNK_SIZE", 800))
+    chunk_overlap = _as_int("CHUNK_OVERLAP", 100)
 
     if chunk_overlap >= chunk_size:
         chunk_overlap = max(0, chunk_size // 5)
 
     config = AppConfig(
         groq_api_key=_get_secret("GROQ_API_KEY", ""),
-        groq_model_name=_as_str("GROQ_MODEL_NAME", "llama-3.1-8b-instant"),
+        groq_model_name=_as_str("GROQ_MODEL_NAME", "openai/gpt-oss-20b"),
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         embedding_model=_as_str("EMBEDDING_MODEL", "paraphrase-MiniLM-L3-v2"),
         embedding_dim=max(1, _as_int("EMBEDDING_DIM", 384)),
-        embedding_batch_size=max(1, _as_int("EMBEDDING_BATCH_SIZE", 8)),
-        top_k_results=max(1, _as_int("TOP_K_RESULTS", 4)),
+        # Was 8. Larger batches make embedding much faster on CPU.
+        embedding_batch_size=max(1, _as_int("EMBEDDING_BATCH_SIZE", 32)),
+        top_k_results=max(1, _as_int("TOP_K_RESULTS", 6)),
         upload_dir=_as_str("UPLOAD_DIR", "uploads"),
         max_tokens=max(128, _as_int("MAX_TOKENS", 1024)),
         temperature=max(0.0, min(2.0, _as_float("TEMPERATURE", 0.2))),
         analysis_context_chars=max(4000, _as_int("ANALYSIS_CONTEXT_CHARS", 12000)),
+        # Reasoning models spend part of this budget on hidden reasoning,
+        # so it must be well above the visible answer length.
+        analysis_max_tokens=max(512, _as_int("ANALYSIS_MAX_TOKENS", 2500)),
+        # Indexing limits. The old hard-coded values (20 pages / 100 chunks)
+        # silently dropped the end of longer documents.
+        max_pages=max(1, _as_int("MAX_PAGES", 60)),
+        max_chunks=max(1, _as_int("MAX_CHUNKS", 400)),
+        # "low", "medium" or "high" for gpt-oss models; empty string disables.
+        reasoning_effort=_as_str("REASONING_EFFORT", "low").lower(),
     )
     _debug_env_status(config)
     return config
@@ -152,3 +166,7 @@ UPLOAD_DIR: str = _CONFIG.upload_dir
 MAX_TOKENS: int = _CONFIG.max_tokens
 TEMPERATURE: float = _CONFIG.temperature
 ANALYSIS_CONTEXT_CHARS: int = _CONFIG.analysis_context_chars
+ANALYSIS_MAX_TOKENS: int = _CONFIG.analysis_max_tokens
+MAX_PAGES: int = _CONFIG.max_pages
+MAX_CHUNKS: int = _CONFIG.max_chunks
+REASONING_EFFORT: str = _CONFIG.reasoning_effort

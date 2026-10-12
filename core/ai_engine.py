@@ -13,35 +13,22 @@ try:
 except ImportError as exc:
     raise ImportError("The groq package is required: pip install groq") from exc
 
-# FIX: import only what is actually used here; MAX_TOKENS/TEMPERATURE are
-# only referenced inside AIEngine.complete() so they are imported there via
-# the config module rather than at module level to avoid a misleading
-# "unused import" and to guarantee they always reflect the live config value.
 from core.config import get_config, get_api_key, validate_config
 
 _DEFAULT_MAX_TOKENS = 1024
 _DEFAULT_TEMPERATURE = 0.1
+_VALID_EFFORTS = {"low", "medium", "high"}
 
-# FIX-1 (memory / pipeline): Replace @lru_cache with a plain module-level
-# singleton guarded by a key-equality check.
-#
-# ROOT CAUSE of the previous bug:
-#   @lru_cache caches the *first* result, including raised exceptions.
-#   If the API key is absent on the very first call, Python caches the
-#   EnvironmentError.  Every subsequent call — even after the key is added
-#   to the environment — hits the cache and re-raises the stale error,
-#   making the app permanently broken until the process is restarted.
-#
-# FIX: Use a module-level variable.  None means "not yet built".
-# If construction fails, the variable stays None, so the next call retries.
-# If the API key changes at runtime the client is rebuilt automatically.
+# Module-level singleton. None means "not yet built". If construction fails
+# the variable stays None so the next call retries (an lru_cache would cache
+# the failure and keep the app broken until restart).
 _client: "Groq | None" = None
 _cached_api_key: str = ""
 
 
 def _resolve_api_key() -> str:
     """Return the active API key or raise a clear EnvironmentError."""
-    validate_config()          # raises EnvironmentError when key is absent
+    validate_config()
     return get_api_key()
 
 
@@ -51,17 +38,9 @@ def _resolve_model() -> str:
 
 
 def _get_client() -> "Groq":
-    """
-    Return the shared Groq client, constructing it on first call or whenever
-    the API key changes.
-
-    This never caches an exception: if construction fails (key absent,
-    network error, etc.) _client stays None and the next call retries.
-    """
+    """Return the shared Groq client, rebuilding it if the API key changes."""
     global _client, _cached_api_key
 
-    # FIX-1: validate_config() raises before we touch _client when key absent,
-    # so _client is never set to a half-constructed or error state.
     api_key = _resolve_api_key()
 
     if _client is None or api_key != _cached_api_key:
@@ -70,13 +49,22 @@ def _get_client() -> "Groq":
             _cached_api_key = api_key
             logger.debug("Groq client (re)built for model=%s", _resolve_model())
         except Exception as exc:
-            # FIX-1: do NOT assign to _client on failure — stays None so
-            # the next call retries construction rather than hitting a cache.
             _client = None
             _cached_api_key = ""
             raise RuntimeError(f"Failed to instantiate Groq client: {exc}") from exc
 
     return _client
+
+
+def _reasoning_kwargs(model: str) -> dict:
+    """
+    Reasoning models (gpt-oss) spend part of max_tokens on hidden reasoning.
+    A low effort leaves room for the visible answer and is much faster.
+    """
+    effort = get_config().reasoning_effort
+    if effort in _VALID_EFFORTS and "gpt-oss" in model.lower():
+        return {"reasoning_effort": effort}
+    return {}
 
 
 def generate_response(
@@ -90,7 +78,8 @@ def generate_response(
 
     Raises:
         ValueError:   If either prompt is blank.
-        RuntimeError: If the Groq client cannot be built or the API call fails.
+        RuntimeError: If the Groq client cannot be built, the API call fails,
+                      or the model returns no text.
     """
     if not system_prompt.strip():
         raise ValueError("system_prompt must not be blank.")
@@ -98,36 +87,56 @@ def generate_response(
         raise ValueError("user_prompt must not be blank.")
 
     client = _get_client()
-    model  = _resolve_model()
+    model = _resolve_model()
+
+    request = dict(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    extra = _reasoning_kwargs(model)
 
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        return response.choices[0].message.content.strip()
+        try:
+            response = client.chat.completions.create(**request, **extra)
+        except Exception as exc:
+            # If the installed SDK or the model rejects reasoning_effort, retry without it.
+            if extra and "reasoning" in str(exc).lower():
+                logger.warning("reasoning_effort rejected (%s); retrying without it.", exc)
+                response = client.chat.completions.create(**request)
+            else:
+                raise
     except Exception as exc:
         raise RuntimeError(
-            f"Groq API request failed (model={model}, "
-            f"max_tokens={max_tokens}): {exc}"
+            f"Groq API request failed (model={model}, max_tokens={max_tokens}): {exc}"
         ) from exc
+
+    choice = response.choices[0]
+    content = (choice.message.content or "").strip()
+
+    if not content:
+        if getattr(choice, "finish_reason", None) == "length":
+            raise RuntimeError(
+                "The model ran out of tokens before writing an answer. "
+                "Increase MAX_TOKENS / ANALYSIS_MAX_TOKENS or lower REASONING_EFFORT."
+            )
+        raise RuntimeError("The model returned an empty response.")
+
+    return content
 
 
 class AIEngine:
     """
-    Thin stateful wrapper used by code paths that expect an object API
-    (e.g. AgenticEngine).  All actual LLM calls delegate to generate_response().
+    Thin stateful wrapper used by code paths that expect an object API.
+    All actual LLM calls delegate to generate_response().
     """
 
     def __init__(self) -> None:
         # Keep init cheap: no network call, no heavy object allocation.
-        # AgenticEngine constructs this during document ingestion, so any
-        # work here delays the pipeline unnecessarily.
         self._model_name = _resolve_model()
 
     def complete(
@@ -138,9 +147,6 @@ class AIEngine:
         temperature: float | None = None,
     ) -> str:
         """Generate one completion, falling back to shared config defaults."""
-        # FIX-2: import MAX_TOKENS/TEMPERATURE here (not at module level) so
-        # they always reflect the live config value and are not "unused" when
-        # AIEngine is not instantiated.
         from core.config import MAX_TOKENS, TEMPERATURE
 
         return generate_response(

@@ -19,10 +19,12 @@ try:
 except ImportError as exc:
     raise ImportError("faiss-cpu is required: pip install faiss-cpu") from exc
 
-from core.config import TOP_K_RESULTS
+from core.config import EMBEDDING_BATCH_SIZE, TOP_K_RESULTS
 from core.embedder import embed_query, embed_texts, get_embedding_dim
 
-_EMBED_BATCH_SIZE = 2
+# Taken from config (EMBEDDING_BATCH_SIZE, default 32). This was hard-coded to 2,
+# which meant one model call per two chunks and dominated indexing time.
+_EMBED_BATCH_SIZE = max(1, EMBEDDING_BATCH_SIZE)
 
 
 class VectorDB:
@@ -32,19 +34,13 @@ class VectorDB:
         self.dim: int = get_embedding_dim()
         self.index: faiss.IndexFlatIP = faiss.IndexFlatIP(self.dim)
         self.chunks: List[Dict[str, Any]] = []
-        # FIX #1: Removed self.last_embeddings — storing the full embedding
-        # matrix on the object created a permanent duplicate of all vectors
-        # in RAM alongside the FAISS index itself (double memory cost).
+
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """
-        Embed and add chunk dicts to the index in small batches.
+        Embed and add chunk dicts to the index in batches.
 
-        FIX #2: Return type changed from np.ndarray to None.
-        Previously this method returned np.vstack(all_vectors) which:
-          (a) re-allocated the entire embedding matrix a second time in RAM
-          (b) was stored in pipeline["embeddings"] and then in st.session_state
-              causing Streamlit to serialize/pickle it on every rerun.
-        Now vectors are added to FAISS and immediately discarded.
+        Vectors are added to FAISS and discarded batch by batch, so peak
+        memory is one batch rather than the whole embedding matrix.
         """
         if not chunks:
             raise ValueError("Cannot index an empty chunk list.")
@@ -78,18 +74,13 @@ class VectorDB:
 
         texts = [chunk["text"] for chunk in unique_chunks]
 
-        # Embed in small batches and add each batch to FAISS immediately.
-        # FIX #3: Do NOT collect all_vectors for vstack — discard each batch
-        # after FAISS ingests it so peak memory = 1 batch at a time.
         for i in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[i : i + _EMBED_BATCH_SIZE]
             vectors = embed_texts(batch)
             vectors = np.ascontiguousarray(vectors, dtype=np.float32)
             self.index.add(vectors)
-            # vectors goes out of scope here — GC can reclaim immediately
 
         self.chunks.extend(unique_chunks)
-        # Return None — callers must not depend on the embedding matrix
 
     def reset(self) -> None:
         """Drop all indexed vectors and associated metadata."""
